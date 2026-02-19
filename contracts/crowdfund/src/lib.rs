@@ -88,7 +88,7 @@ impl CrowdfundContract {
 
         let empty_contributors: Vec<Address> = Vec::new(&env);
         env.storage()
-            .instance()
+            .persistent()
             .set(&DataKey::Contributors, &empty_contributors);
 
         let empty_roadmap: Vec<RoadmapItem> = Vec::new(&env);
@@ -125,14 +125,18 @@ impl CrowdfundContract {
         );
 
         // Update the contributor's running total.
+        let contribution_key = DataKey::Contribution(contributor.clone());
         let prev: i128 = env
             .storage()
-            .instance()
-            .get(&DataKey::Contribution(contributor.clone()))
+            .persistent()
+            .get(&contribution_key)
             .unwrap_or(0);
         env.storage()
-            .instance()
-            .set(&DataKey::Contribution(contributor.clone()), &(prev + amount));
+            .persistent()
+            .set(&contribution_key, &(prev + amount));
+        env.storage()
+            .persistent()
+            .extend_ttl(&contribution_key, 100, 100);
 
         // Update the global total raised.
         let total: i128 = env
@@ -147,14 +151,17 @@ impl CrowdfundContract {
         // Track contributor address if new.
         let mut contributors: Vec<Address> = env
             .storage()
-            .instance()
+            .persistent()
             .get(&DataKey::Contributors)
             .unwrap();
         if !contributors.contains(&contributor) {
             contributors.push_back(contributor);
             env.storage()
-                .instance()
+                .persistent()
                 .set(&DataKey::Contributors, &contributors);
+            env.storage()
+                .persistent()
+                .extend_ttl(&DataKey::Contributors, 100, 100);
         }
     }
 
@@ -213,15 +220,16 @@ impl CrowdfundContract {
 
         let contributors: Vec<Address> = env
             .storage()
-            .instance()
+            .persistent()
             .get(&DataKey::Contributors)
             .unwrap();
 
         for contributor in contributors.iter() {
+            let contribution_key = DataKey::Contribution(contributor.clone());
             let amount: i128 = env
                 .storage()
-                .instance()
-                .get(&DataKey::Contribution(contributor.clone()))
+                .persistent()
+                .get(&contribution_key)
                 .unwrap_or(0);
             if amount > 0 {
                 token_client.transfer(
@@ -230,8 +238,11 @@ impl CrowdfundContract {
                     &amount,
                 );
                 env.storage()
-                    .instance()
-                    .set(&DataKey::Contribution(contributor), &0i128);
+                    .persistent()
+                    .set(&contribution_key, &0i128);
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&contribution_key, 100, 100);
             }
         }
 
@@ -255,15 +266,16 @@ impl CrowdfundContract {
 
         let contributors: Vec<Address> = env
             .storage()
-            .instance()
+            .persistent()
             .get(&DataKey::Contributors)
             .unwrap();
 
         for contributor in contributors.iter() {
+            let contribution_key = DataKey::Contribution(contributor.clone());
             let amount: i128 = env
                 .storage()
-                .instance()
-                .get(&DataKey::Contribution(contributor.clone()))
+                .persistent()
+                .get(&contribution_key)
                 .unwrap_or(0);
             if amount > 0 {
                 token_client.transfer(
@@ -272,8 +284,11 @@ impl CrowdfundContract {
                     &amount,
                 );
                 env.storage()
-                    .instance()
-                    .set(&DataKey::Contribution(contributor), &0i128);
+                    .persistent()
+                    .set(&contribution_key, &0i128);
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&contribution_key, 100, 100);
             }
         }
 
@@ -348,9 +363,10 @@ impl CrowdfundContract {
 
     /// Returns the contribution of a specific address.
     pub fn contribution(env: Env, contributor: Address) -> i128 {
+        let contribution_key = DataKey::Contribution(contributor);
         env.storage()
-            .instance()
-            .get(&DataKey::Contribution(contributor))
+            .persistent()
+            .get(&contribution_key)
             .unwrap_or(0)
     }
 
