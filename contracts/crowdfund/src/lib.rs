@@ -35,6 +35,8 @@ pub enum DataKey {
     Contributors,
     /// Campaign status (Active, Successful, Refunded).
     Status,
+    /// Minimum contribution amount.
+    MinContribution,
 }
 
 // ── Contract ────────────────────────────────────────────────────────────────
@@ -47,16 +49,18 @@ impl CrowdfundContract {
     /// Initializes a new crowdfunding campaign.
     ///
     /// # Arguments
-    /// * `creator`  – The campaign creator's address.
-    /// * `token`    – The token contract address used for contributions.
-    /// * `goal`     – The funding goal (in the token's smallest unit).
-    /// * `deadline` – The campaign deadline as a ledger timestamp.
+    /// * `creator`          – The campaign creator's address.
+    /// * `token`            – The token contract address used for contributions.
+    /// * `goal`             – The funding goal (in the token's smallest unit).
+    /// * `deadline`         – The campaign deadline as a ledger timestamp.
+    /// * `min_contribution` – The minimum contribution amount.
     pub fn initialize(
         env: Env,
         creator: Address,
         token: Address,
         goal: i128,
         deadline: u64,
+        min_contribution: i128,
     ) {
         // Prevent re-initialization.
         if env.storage().instance().has(&DataKey::Creator) {
@@ -69,6 +73,7 @@ impl CrowdfundContract {
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::Goal, &goal);
         env.storage().instance().set(&DataKey::Deadline, &deadline);
+        env.storage().instance().set(&DataKey::MinContribution, &min_contribution);
         env.storage().instance().set(&DataKey::TotalRaised, &0i128);
         env.storage().instance().set(&DataKey::Status, &Status::Active);
 
@@ -84,6 +89,11 @@ impl CrowdfundContract {
     /// after the deadline has passed.
     pub fn contribute(env: Env, contributor: Address, amount: i128) {
         contributor.require_auth();
+
+        let min_contribution: i128 = env.storage().instance().get(&DataKey::MinContribution).unwrap();
+        if amount < min_contribution {
+            panic!("amount below minimum");
+        }
 
         let deadline: u64 = env.storage().instance().get(&DataKey::Deadline).unwrap();
         if env.ledger().timestamp() > deadline {
@@ -283,5 +293,10 @@ impl CrowdfundContract {
             .instance()
             .get(&DataKey::Contribution(contributor))
             .unwrap_or(0)
+    }
+
+    /// Returns the minimum contribution amount.
+    pub fn min_contribution(env: Env) -> i128 {
+        env.storage().instance().get(&DataKey::MinContribution).unwrap()
     }
 }
