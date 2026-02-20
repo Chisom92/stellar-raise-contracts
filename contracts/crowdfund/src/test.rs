@@ -1849,3 +1849,146 @@ proptest! {
         );
     }
 }
+
+// ── Pause/Unpause Tests ─────────────────────────────────────────────────────
+
+#[test]
+fn test_contribute_rejected_when_paused() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+
+    client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution, &None);
+
+    // Pause the contract
+    client.set_paused(&true);
+
+    // Try to contribute while paused
+    let contributor = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &contributor, 5_000);
+
+    let result = client.try_contribute(&contributor, &5_000);
+
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().unwrap(), crate::ContractError::ContractPaused);
+}
+
+#[test]
+fn test_withdraw_rejected_when_paused() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+
+    client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution, &None);
+
+    // Contribute to meet goal
+    let contributor = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &contributor, goal);
+    client.contribute(&contributor, &goal);
+
+    // Move past deadline
+    env.ledger().set_timestamp(deadline + 1);
+
+    // Pause the contract
+    client.set_paused(&true);
+
+    // Try to withdraw while paused
+    let result = client.try_withdraw();
+
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().unwrap(), crate::ContractError::ContractPaused);
+}
+
+#[test]
+fn test_refund_rejected_when_paused() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+
+    client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution, &None);
+
+    // Contribute but don't meet goal
+    let contributor = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &contributor, 500_000);
+    client.contribute(&contributor, &500_000);
+
+    // Move past deadline
+    env.ledger().set_timestamp(deadline + 1);
+
+    // Pause the contract
+    client.set_paused(&true);
+
+    // Try to refund while paused
+    let result = client.try_refund();
+
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().unwrap(), crate::ContractError::ContractPaused);
+}
+
+#[test]
+fn test_all_interactions_succeed_after_unpause() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+
+    client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution, &None);
+
+    // Pause the contract
+    client.set_paused(&true);
+
+    // Unpause the contract
+    client.set_paused(&false);
+
+    // Contribute should succeed
+    let contributor = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &contributor, 5_000);
+    client.contribute(&contributor, &5_000);
+
+    assert_eq!(client.total_raised(), 5_000);
+}
+
+#[test]
+#[should_panic]
+fn test_set_paused_rejected_from_non_creator() {
+    let env = Env::default();
+    let contract_id = env.register(CrowdfundContract, ());
+    let client = CrowdfundContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract_id = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_address = token_contract_id.address();
+
+    let creator = Address::generate(&env);
+    let non_creator = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+
+    client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution, &None);
+
+    env.mock_all_auths_allowing_non_root_auth();
+    env.set_auths(&[]);
+
+    client.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &non_creator,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "set_paused",
+            args: soroban_sdk::vec![&env, true.into()],
+            sub_invokes: &[],
+        },
+    }]);
+
+    client.set_paused(&true);
+}
