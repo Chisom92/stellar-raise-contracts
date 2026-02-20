@@ -35,9 +35,11 @@ stellar-raise-contracts/
 
 - [Rust](https://rustup.rs/) (stable)
 - The `wasm32-unknown-unknown` target:
+
   ```bash
   rustup target add wasm32-unknown-unknown
   ```
+
 - [Stellar CLI](https://soroban.stellar.org/docs/getting-started/setup) (optional, for deployment)
 
 ## Getting Started
@@ -88,6 +90,10 @@ stellar contract deploy \
   --network testnet \
   --source <YOUR_SECRET_KEY>
 ```
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a full history of notable changes.
 
 ## Contributing
 

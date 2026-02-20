@@ -7,6 +7,26 @@ mod test;
 
 // ── Data Keys ───────────────────────────────────────────────────────────────
 
+#[derive(Clone, PartialEq)]
+#[contracttype]
+pub enum Status {
+    Active,
+    Successful,
+    Refunded,
+    Cancelled,
+}
+
+#[derive(Clone)]
+#[contracttype]
+pub struct CampaignStats {
+    pub total_raised: i128,
+    pub goal: i128,
+    pub progress_bps: u32,
+    pub contributor_count: u32,
+    pub average_contribution: i128,
+    pub largest_contribution: i128,
+}
+
 #[derive(Clone)]
 #[contracttype]
 pub enum DataKey {
@@ -24,6 +44,10 @@ pub enum DataKey {
     Contribution(Address),
     /// List of all contributor addresses.
     Contributors,
+    /// Campaign status (Active, Successful, Refunded).
+    Status,
+    /// Minimum contribution amount.
+    MinContribution,
 }
 
 // ── Contract Error ──────────────────────────────────────────────────────────
@@ -52,17 +76,19 @@ impl CrowdfundContract {
     /// Initializes a new crowdfunding campaign.
     ///
     /// # Arguments
-    /// * `creator`  – The campaign creator's address.
-    /// * `token`    – The token contract address used for contributions.
-    /// * `goal`     – The funding goal (in the token's smallest unit).
-    /// * `deadline` – The campaign deadline as a ledger timestamp.
+    /// * `creator`          – The campaign creator's address.
+    /// * `token`            – The token contract address used for contributions.
+    /// * `goal`             – The funding goal (in the token's smallest unit).
+    /// * `deadline`         – The campaign deadline as a ledger timestamp.
+    /// * `min_contribution` – The minimum contribution amount.
     pub fn initialize(
         env: Env,
         creator: Address,
         token: Address,
         goal: i128,
         deadline: u64,
-    ) -> Result<(), ContractError> {
+        min_contribution: i128,
+    ) {
         // Prevent re-initialization.
         if env.storage().instance().has(&DataKey::Creator) {
             return Err(ContractError::AlreadyInitialized);
@@ -84,7 +110,9 @@ impl CrowdfundContract {
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::Goal, &goal);
         env.storage().instance().set(&DataKey::Deadline, &deadline);
+        env.storage().instance().set(&DataKey::MinContribution, &min_contribution);
         env.storage().instance().set(&DataKey::TotalRaised, &0i128);
+        env.storage().instance().set(&DataKey::Status, &Status::Active);
 
         let empty_contributors: Vec<Address> = Vec::new(&env);
         env.storage()
@@ -101,9 +129,9 @@ impl CrowdfundContract {
     pub fn contribute(env: Env, contributor: Address, amount: i128) -> Result<(), ContractError> {
         contributor.require_auth();
 
-        // Validate amount is positive
-        if amount <= 0 {
-            return Err(ContractError::InvalidAmount);
+        let min_contribution: i128 = env.storage().instance().get(&DataKey::MinContribution).unwrap();
+        if amount < min_contribution {
+            panic!("amount below minimum");
         }
 
         let deadline: u64 = env.storage().instance().get(&DataKey::Deadline).unwrap();
@@ -159,7 +187,12 @@ impl CrowdfundContract {
 
     /// Withdraw raised funds — only callable by the creator after the
     /// deadline, and only if the goal has been met.
-    pub fn withdraw(env: Env) -> Result<(), ContractError> {
+    pub fn withdraw(env: Env) {
+        let status: Status = env.storage().instance().get(&DataKey::Status).unwrap();
+        if status != Status::Active {
+            panic!("campaign is not active");
+        }
+
         let creator: Address = env.storage().instance().get(&DataKey::Creator).unwrap();
         creator.require_auth();
 
@@ -180,13 +213,17 @@ impl CrowdfundContract {
         token_client.transfer(&env.current_contract_address(), &creator, &total);
 
         env.storage().instance().set(&DataKey::TotalRaised, &0i128);
-
-        Ok(())
+        env.storage().instance().set(&DataKey::Status, &Status::Successful);
     }
 
     /// Refund all contributors — callable by anyone after the deadline
     /// if the goal was **not** met.
-    pub fn refund(env: Env) -> Result<(), ContractError> {
+    pub fn refund(env: Env) {
+        let status: Status = env.storage().instance().get(&DataKey::Status).unwrap();
+        if status != Status::Active {
+            panic!("campaign is not active");
+        }
+
         let deadline: u64 = env.storage().instance().get(&DataKey::Deadline).unwrap();
         if env.ledger().timestamp() <= deadline {
             return Err(ContractError::CampaignStillActive);
@@ -226,8 +263,49 @@ impl CrowdfundContract {
         }
 
         env.storage().instance().set(&DataKey::TotalRaised, &0i128);
+        env.storage().instance().set(&DataKey::Status, &Status::Refunded);
+    }
 
-        Ok(())
+    /// Cancel the campaign and refund all contributors — callable only by
+    /// the creator while the campaign is still Active.
+    pub fn cancel(env: Env) {
+        let status: Status = env.storage().instance().get(&DataKey::Status).unwrap();
+        if status != Status::Active {
+            panic!("campaign is not active");
+        }
+
+        let creator: Address = env.storage().instance().get(&DataKey::Creator).unwrap();
+        creator.require_auth();
+
+        let token_address: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+        let token_client = token::Client::new(&env, &token_address);
+
+        let contributors: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Contributors)
+            .unwrap();
+
+        for contributor in contributors.iter() {
+            let amount: i128 = env
+                .storage()
+                .instance()
+                .get(&DataKey::Contribution(contributor.clone()))
+                .unwrap_or(0);
+            if amount > 0 {
+                token_client.transfer(
+                    &env.current_contract_address(),
+                    &contributor,
+                    &amount,
+                );
+                env.storage()
+                    .instance()
+                    .set(&DataKey::Contribution(contributor), &0i128);
+            }
+        }
+
+        env.storage().instance().set(&DataKey::TotalRaised, &0i128);
+        env.storage().instance().set(&DataKey::Status, &Status::Cancelled);
     }
 
     // ── View helpers ────────────────────────────────────────────────────
@@ -256,5 +334,48 @@ impl CrowdfundContract {
             .instance()
             .get(&DataKey::Contribution(contributor))
             .unwrap_or(0)
+    }
+
+    /// Returns the minimum contribution amount.
+    pub fn min_contribution(env: Env) -> i128 {
+        env.storage().instance().get(&DataKey::MinContribution).unwrap()
+    }
+
+    /// Returns comprehensive campaign statistics.
+    pub fn get_stats(env: Env) -> CampaignStats {
+        let total_raised: i128 = env.storage().instance().get(&DataKey::TotalRaised).unwrap_or(0);
+        let goal: i128 = env.storage().instance().get(&DataKey::Goal).unwrap();
+        let contributors: Vec<Address> = env.storage().instance().get(&DataKey::Contributors).unwrap();
+
+        let progress_bps = if goal > 0 {
+            let raw = (total_raised as i128 * 10_000) / goal;
+            if raw > 10_000 { 10_000 } else { raw as u32 }
+        } else {
+            0
+        };
+
+        let contributor_count = contributors.len();
+        let (average_contribution, largest_contribution) = if contributor_count == 0 {
+            (0, 0)
+        } else {
+            let average = total_raised / contributor_count as i128;
+            let mut largest = 0i128;
+            for contributor in contributors.iter() {
+                let amount: i128 = env.storage().instance().get(&DataKey::Contribution(contributor)).unwrap_or(0);
+                if amount > largest {
+                    largest = amount;
+                }
+            }
+            (average, largest)
+        };
+
+        CampaignStats {
+            total_raised,
+            goal,
+            progress_bps,
+            contributor_count,
+            average_contribution,
+            largest_contribution,
+        }
     }
 }
