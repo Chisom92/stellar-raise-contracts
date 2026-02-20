@@ -9,7 +9,7 @@ Stellar Raise lets anyone create a crowdfunding campaign on-chain. Contributors 
 ### Key Features
 
 | Feature | Description |
-|---|---|
+| :--- | :--- |
 | **Initialize** | Create a campaign with a goal, deadline, and token |
 | **Contribute** | Pledge tokens before the deadline |
 | **Withdraw** | Creator claims funds after a successful campaign |
@@ -17,7 +17,7 @@ Stellar Raise lets anyone create a crowdfunding campaign on-chain. Contributors 
 
 ## Project Structure
 
-```
+```text
 stellar-raise-contracts/
 ├── .github/workflows/rust_ci.yml   # CI pipeline
 ├── contracts/crowdfund/
@@ -77,6 +77,44 @@ fn goal(env) -> i128;
 fn deadline(env) -> u64;
 fn contribution(env, contributor) -> i128;
 ```
+
+## Upgrading the Contract
+
+Once deployed, the contract can be upgraded to a new WASM implementation without changing its address or losing stored data. This allows the project to ship fixes and improvements without redeploying.
+
+### Upgrade Procedure
+
+1. **Build the new WASM binary:**
+   ```bash
+   cargo build --release --target wasm32-unknown-unknown
+   ```
+
+2. **Upload the new WASM to the network:**
+   ```bash
+   stellar contract install \
+     --wasm target/wasm32-unknown-unknown/release/crowdfund.wasm \
+     --network testnet \
+     --source <YOUR_SECRET_KEY>
+   ```
+   This returns the WASM hash (SHA-256).
+
+3. **Invoke the upgrade function:**
+   ```bash
+   stellar contract invoke \
+     --id <CONTRACT_ADDRESS> \
+     --fn upgrade \
+     --arg <WASM_HASH> \
+     --network testnet \
+     --source <YOUR_SECRET_KEY>
+   ```
+
+### Important Notes
+
+- Only the **admin** (set to the campaign creator at initialization) can call the upgrade function.
+- The upgrade is **irreversible** — ensure the new WASM is thoroughly tested before upgrading.
+- All contract storage and state persist across upgrades.
+- The contract address remains the same after an upgrade.
+- **Recommendation:** Have at least two reviewers approve upgrade PRs before merging to production.
 
 ## Deployment (Testnet)
 
