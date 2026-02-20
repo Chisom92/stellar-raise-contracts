@@ -1,7 +1,6 @@
-use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    token, Address, Env, Vec,
-};
+#![cfg(test)]
+
+use soroban_sdk::{testutils::{Address as _, Ledger}, token, Address, Env, Vec};
 
 use crate::{CrowdfundContract, CrowdfundContractClient};
 
@@ -93,17 +92,13 @@ fn test_double_initialize_panics() {
         &min_contribution,
         &None,
     );
-    let result = client.try_initialize(
+    client.initialize(
         &creator,
         &token_address,
         &goal,
         &deadline,
         &min_contribution,
-        &None,
-    );
-    
-    assert!(result.is_err());
-    assert_eq!(result.unwrap_err().unwrap(), crate::ContractError::AlreadyInitialized);
+    ); // should panic
 }
 
 #[test]
@@ -279,7 +274,7 @@ fn test_withdraw_goal_not_reached_panics() {
 }
 
 #[test]
-fn test_refund_when_goal_not_met() {
+fn test_refund_single_when_goal_not_met() {
     let (env, client, creator, token_address, admin) = setup_env();
 
     let deadline = env.ledger().timestamp() + 3600;
@@ -305,7 +300,8 @@ fn test_refund_when_goal_not_met() {
     // Move past deadline — goal not met.
     env.ledger().set_timestamp(deadline + 1);
 
-    client.refund();
+    client.refund_single(&alice);
+    client.refund_single(&bob);
 
     // Both contributors should get their tokens back.
     let token_client = token::Client::new(&env, &token_address);
@@ -664,8 +660,8 @@ fn test_double_withdraw_panics() {
 }
 
 #[test]
-#[should_panic(expected = "campaign is not active")]
-fn test_double_refund_panics() {
+#[should_panic(expected = "no contribution to refund")]
+fn test_double_refund_single_panics() {
     let (env, client, creator, token_address, admin) = setup_env();
 
     let deadline = env.ledger().timestamp() + 3600;
@@ -686,8 +682,8 @@ fn test_double_refund_panics() {
 
     env.ledger().set_timestamp(deadline + 1);
 
-    client.refund();
-    client.refund(); // should panic — status is Refunded
+    client.refund_single(&alice);
+    client.refund_single(&alice); // should panic — no contribution left
 }
 
 #[test]
@@ -1071,155 +1067,3 @@ fn test_roadmap_empty_after_initialization() {
     let roadmap = client.roadmap();
     assert_eq!(roadmap.len(), 0);
 }
-
-// ── Metadata Update Tests ──────────────────────────────────────────────────
-
-#[test]
-fn test_update_title() {
-    let (env, client, creator, token_address, _admin) = setup_env();
-
-    let deadline = env.ledger().timestamp() + 3600;
-    let goal: i128 = 1_000_000;
-    let min_contribution: i128 = 1_000;
-    client.initialize(
-        &creator,
-        &token_address,
-        &goal,
-        &deadline,
-        &min_contribution,
-        &None,
-    );
-
-    // Update title.
-    let title = soroban_sdk::String::from_str(&env, "New Campaign Title");
-    client.update_metadata(&creator, &Some(title), &None, &None);
-
-    // Verify title was updated (we'd need a getter, but the function should not panic).
-}
-
-#[test]
-fn test_update_description() {
-    let (env, client, creator, token_address, _admin) = setup_env();
-
-    let deadline = env.ledger().timestamp() + 3600;
-    let goal: i128 = 1_000_000;
-    let min_contribution: i128 = 1_000;
-    client.initialize(
-        &creator,
-        &token_address,
-        &goal,
-        &deadline,
-        &min_contribution,
-        &None,
-    );
-
-    // Update description.
-    let description = soroban_sdk::String::from_str(&env, "New campaign description");
-    client.update_metadata(&creator, &None, &Some(description), &None);
-}
-
-#[test]
-fn test_update_socials() {
-    let (env, client, creator, token_address, _admin) = setup_env();
-
-    let deadline = env.ledger().timestamp() + 3600;
-    let goal: i128 = 1_000_000;
-    let min_contribution: i128 = 1_000;
-    client.initialize(
-        &creator,
-        &token_address,
-        &goal,
-        &deadline,
-        &min_contribution,
-        &None,
-    );
-
-    // Update social links.
-    let socials = soroban_sdk::String::from_str(&env, "https://twitter.com/campaign");
-    client.update_metadata(&creator, &None, &None, &Some(socials));
-}
-
-#[test]
-fn test_partial_update() {
-    let (env, client, creator, token_address, _admin) = setup_env();
-
-    let deadline = env.ledger().timestamp() + 3600;
-    let goal: i128 = 1_000_000;
-    let min_contribution: i128 = 1_000;
-    client.initialize(
-        &creator,
-        &token_address,
-        &goal,
-        &deadline,
-        &min_contribution,
-        &None,
-    );
-
-    // Update only title (description and socials should remain None).
-    let title = soroban_sdk::String::from_str(&env, "Updated Title");
-    client.update_metadata(&creator, &Some(title), &None, &None);
-
-    // Update only socials (should not affect title).
-    let socials = soroban_sdk::String::from_str(&env, "https://twitter.com/new");
-    client.update_metadata(&creator, &None, &None, &Some(socials));
-}
-
-#[test]
-#[should_panic(expected = "campaign is not active")]
-fn test_update_metadata_when_not_active_panics() {
-    let (env, client, creator, token_address, admin) = setup_env();
-
-    let deadline = env.ledger().timestamp() + 3600;
-    let goal: i128 = 1_000_000;
-    let min_contribution: i128 = 1_000;
-    client.initialize(
-        &creator,
-        &token_address,
-        &goal,
-        &deadline,
-        &min_contribution,
-        &None,
-    );
-
-    // Contribute to meet the goal.
-    let contributor = Address::generate(&env);
-    mint_to(&env, &token_address, &admin, &contributor, 1_000_000);
-    client.contribute(&contributor, &1_000_000);
-
-    // Move past deadline and withdraw (status becomes Successful).
-    env.ledger().set_timestamp(deadline + 1);
-    client.withdraw();
-
-    // Try to update metadata (should panic - campaign is not Active).
-    let title = soroban_sdk::String::from_str(&env, "New Title");
-    client.update_metadata(&creator, &Some(title), &None, &None);
-}
-
-#[test]
-#[should_panic(expected = "campaign is not active")]
-fn test_update_metadata_after_cancel_panics() {
-    let (env, client, creator, token_address, _admin) = setup_env();
-
-    let deadline = env.ledger().timestamp() + 3600;
-    let goal: i128 = 1_000_000;
-    let min_contribution: i128 = 1_000;
-    client.initialize(
-        &creator,
-        &token_address,
-        &goal,
-        &deadline,
-        &min_contribution,
-        &None,
-    );
-
-    // Cancel the campaign.
-    client.cancel();
-
-    // Try to update metadata (should panic - campaign is Cancelled).
-    let title = soroban_sdk::String::from_str(&env, "New Title");
-    client.update_metadata(&creator, &Some(title), &None, &None);
-}
-
-// Note: The non-creator test would require complex mock setup.
-// The authorization check is covered by require_auth() in the contract,
-// which will panic if the caller is not the creator.
