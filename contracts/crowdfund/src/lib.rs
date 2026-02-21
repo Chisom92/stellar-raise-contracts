@@ -191,6 +191,32 @@ impl CrowdfundContract {
         Ok(())
     }
 
+    /// Adds addresses to the campaign's whitelist.
+    ///
+    /// This function is restricted to the campaign creator and can only be
+    /// called while the campaign is Active.
+    pub fn add_to_whitelist(env: Env, addresses: Vec<Address>) {
+        if addresses.is_empty() {
+            panic!("addresses list must not be empty");
+        }
+
+        let status: Status = env.storage().instance().get(&DataKey::Status).unwrap();
+        if status != Status::Active {
+            panic!("campaign is not active");
+        }
+
+        let creator: Address = env.storage().instance().get(&DataKey::Creator).unwrap();
+        creator.require_auth();
+
+        if !env.storage().instance().has(&DataKey::WhitelistEnabled) {
+            env.storage().instance().set(&DataKey::WhitelistEnabled, &true);
+        }
+
+        for address in addresses.iter() {
+            env.storage().instance().set(&DataKey::Whitelist(address), &true);
+        }
+    }
+
     /// Contribute tokens to the campaign.
     ///
     /// The contributor must authorize the call. Contributions are rejected
@@ -588,6 +614,14 @@ bash
             deadline,
             total_raised,
         }
+    }
+ 
+    /// Returns true if the address is whitelisted.
+    pub fn is_whitelisted(env: Env, address: Address) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Whitelist(address))
+            .unwrap_or(false)
     }
 
     /// Returns comprehensive campaign statistics.

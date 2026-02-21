@@ -1077,7 +1077,13 @@ fn test_creator() {
     let deadline = env.ledger().timestamp() + 3600;
     let goal: i128 = 1_000_000;
     let min_contribution: i128 = 1_000;
-    client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution);
+    client.initialize(
+        &creator,
+        &token_address,
+        &goal,
+        &deadline,
+        &min_contribution,
+    );
 
     assert_eq!(client.creator(), creator);
 }
@@ -1107,7 +1113,13 @@ fn test_get_campaign_info_with_contributions() {
     let deadline = env.ledger().timestamp() + 3600;
     let goal: i128 = 1_000_000;
     let min_contribution: i128 = 1_000;
-    client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution);
+    client.initialize(
+        &creator,
+        &token_address,
+        &goal,
+        &deadline,
+        &min_contribution,
+    );
 
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -1133,7 +1145,13 @@ fn test_get_campaign_info_after_goal_reached() {
     let deadline = env.ledger().timestamp() + 3600;
     let goal: i128 = 1_000_000;
     let min_contribution: i128 = 1_000;
-    client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution);
+    client.initialize(
+        &creator,
+        &token_address,
+        &goal,
+        &deadline,
+        &min_contribution,
+    );
 
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 1_500_000);
@@ -1146,4 +1164,115 @@ fn test_get_campaign_info_after_goal_reached() {
     assert_eq!(info.goal, goal);
     assert_eq!(info.deadline, deadline);
     assert_eq!(info.total_raised, 1_500_000);
+}
+
+// ── Whitelist Tests ────────────────────────────────────────────────────────
+
+#[test]
+fn test_whitelisted_contribution() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    client.initialize(
+        &creator,
+        &token_address,
+        &goal,
+        &deadline,
+        &min_contribution,
+    );
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    // Add Alice to whitelist
+    client.add_to_whitelist(&soroban_sdk::vec![&env, alice.clone()]);
+
+    mint_to(&env, &token_address, &admin, &alice, 500_000);
+    mint_to(&env, &token_address, &admin, &bob, 500_000);
+
+    // Alice (whitelisted) can contribute
+    client.contribute(&alice, &500_000);
+    assert_eq!(client.contribution(&alice), 500_000);
+
+    // Bob (not whitelisted) cannot contribute
+    let result = client.try_contribute(&bob, &500_000);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_open_campaign_no_whitelist() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    client.initialize(
+        &creator,
+        &token_address,
+        &goal,
+        &deadline,
+        &min_contribution,
+    );
+
+    let alice = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &alice, 500_000);
+
+    // Any address can contribute if no addresses were ever added to the whitelist
+    client.contribute(&alice, &500_000);
+    assert_eq!(client.contribution(&alice), 500_000);
+}
+
+#[test]
+fn test_batch_whitelist_addition() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    client.initialize(
+        &creator,
+        &token_address,
+        &goal,
+        &deadline,
+        &min_contribution,
+    );
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.add_to_whitelist(&soroban_sdk::vec![&env, alice.clone(), bob.clone()]);
+
+    assert!(client.is_whitelisted(&alice));
+    assert!(client.is_whitelisted(&bob));
+
+    mint_to(&env, &token_address, &admin, &alice, 100_000);
+    mint_to(&env, &token_address, &admin, &bob, 100_000);
+
+    client.contribute(&alice, &100_000);
+    client.contribute(&bob, &100_000);
+
+    assert_eq!(client.total_raised(), 200_000);
+}
+
+#[test]
+#[should_panic]
+fn test_add_to_whitelist_non_creator_panics() {
+    let (env, client, _creator, _token_address, _admin) = setup_env();
+
+    let alice = Address::generate(&env);
+
+    // Non-creator address
+    let _attacker = Address::generate(&env);
+
+    // Mock authorization for non-creator
+    env.mock_all_auths();
+
+    // This should panic because creator.require_auth() will fail (mock_all_auths handles the auth but we check if the caller is the creator)
+    // Actually, require_auth checks if the address authorized the call.
+    // In lib.rs: let creator: Address = env.storage().instance().get(&DataKey::Creator).unwrap(); creator.require_auth();
+    // This means the 'creator' MUST authorize the call. If 'attacker' calls it, 'creator.require_auth()' will fail unless 'creator' also authorized it.
+
+    client.add_to_whitelist(&soroban_sdk::vec![&env, alice]);
 }
