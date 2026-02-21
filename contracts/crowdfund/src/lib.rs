@@ -99,6 +99,16 @@ pub enum DataKey {
     SocialLinks,
     /// Platform configuration for fee handling.
     PlatformConfig,
+    /// Maximum total amount that can be raised (hard cap).
+    HardCap,
+    /// Individual pledge by address.
+    Pledge(Address),
+    /// List of all pledger addresses.
+    Pledgers,
+    /// Total amount pledged (not yet collected).
+    TotalPledged,
+    /// List of stretch goal milestones.
+    StretchGoals,
 }
 
 // ── Contract Error ──────────────────────────────────────────────────────────
@@ -115,6 +125,8 @@ pub enum ContractError {
     GoalNotReached = 4,
     GoalReached = 5,
     Overflow = 6,
+    InvalidHardCap = 7,
+    HardCapExceeded = 8,
 }
 
 // ── Contract ────────────────────────────────────────────────────────────────
@@ -131,6 +143,7 @@ impl CrowdfundContract {
     /// * `creator`            – The campaign creator's address.
     /// * `token`              – The token contract address used for contributions.
     /// * `goal`               – The funding goal (in the token's smallest unit).
+    /// * `hard_cap`           – Maximum total amount that can be raised (must be >= goal).
     /// * `deadline`           – The campaign deadline as a ledger timestamp.
     /// * `min_contribution`   – The minimum contribution amount.
     /// * `platform_config`    – Optional platform configuration (address and fee in basis points).
@@ -143,6 +156,7 @@ impl CrowdfundContract {
         creator: Address,
         token: Address,
         goal: i128,
+        hard_cap: i128,
         deadline: u64,
         min_contribution: i128,
         platform_config: Option<PlatformConfig>,
@@ -161,17 +175,13 @@ impl CrowdfundContract {
             }
         }
 
-        env.storage().instance().set(&DataKey::Creator, &creator);
-        env.storage().instance().set(&DataKey::Token, &token);
-
-        /// Returns the list of all contributor addresses.
-        pub fn contributors(env: Env) -> Vec<Address> {
-            env.storage()
-                .instance()
-                .get(&DataKey::Contributors)
-                .unwrap_or(Vec::new(&env))
+        if hard_cap < goal {
+            return Err(ContractError::InvalidHardCap);
         }
 
+        env.storage().instance().set(&DataKey::Creator, &creator);
+        env.storage().instance().set(&DataKey::Token, &token);
+        env.storage().instance().set(&DataKey::HardCap, &hard_cap);
         env.storage().instance().set(&DataKey::Goal, &goal);
         env.storage().instance().set(&DataKey::Deadline, &deadline);
         env.storage()
@@ -216,11 +226,25 @@ impl CrowdfundContract {
             return Err(ContractError::CampaignEnded);
         }
 
+        let total: i128 = env.storage().instance().get(&DataKey::TotalRaised).unwrap();
+        let hard_cap: i128 = env.storage().instance().get(&DataKey::HardCap).unwrap();
+
+        if total >= hard_cap {
+            return Err(ContractError::HardCapExceeded);
+        }
+
+        let headroom = hard_cap - total;
+        let effective_amount = if amount <= headroom {
+            amount
+        } else {
+            headroom
+        };
+
         let token_address: Address = env.storage().instance().get(&DataKey::Token).unwrap();
         let token_client = token::Client::new(&env, &token_address);
 
         // Transfer tokens from the contributor to this contract.
-        token_client.transfer(&contributor, &env.current_contract_address(), &amount);
+        token_client.transfer(&contributor, &env.current_contract_address(), &effective_amount);
 
         // Update the contributor's running total with overflow protection.
         let contribution_key = DataKey::Contribution(contributor.clone());
@@ -230,7 +254,9 @@ impl CrowdfundContract {
             .get(&contribution_key)
             .unwrap_or(0);
 
-        let new_contribution = prev.checked_add(amount).ok_or(ContractError::Overflow)?;
+        let new_contribution = prev
+            .checked_add(effective_amount)
+            .ok_or(ContractError::Overflow)?;
 
         env.storage()
             .persistent()
@@ -240,13 +266,18 @@ impl CrowdfundContract {
             .extend_ttl(&contribution_key, 100, 100);
 
         // Update the global total raised with overflow protection.
-        let total: i128 = env.storage().instance().get(&DataKey::TotalRaised).unwrap();
-
-        let new_total = total.checked_add(amount).ok_or(ContractError::Overflow)?;
+        let new_total = total
+            .checked_add(effective_amount)
+            .ok_or(ContractError::Overflow)?;
 
         env.storage()
             .instance()
             .set(&DataKey::TotalRaised, &new_total);
+
+        if new_total == hard_cap {
+            env.events()
+                .publish(("campaign", "hard_cap_reached"), hard_cap);
+        }
 
         // Track contributor address if new.
         let mut contributors: Vec<Address> = env
@@ -267,7 +298,7 @@ impl CrowdfundContract {
         // Emit contribution event
         env.events().publish(
             ("campaign", "contributed"),
-            (contributor, amount),
+            (contributor, effective_amount),
         );
 
         Ok(())
@@ -809,6 +840,11 @@ impl CrowdfundContract {
     /// Returns the funding goal.
     pub fn goal(env: Env) -> i128 {
         env.storage().instance().get(&DataKey::Goal).unwrap()
+    }
+
+    /// Returns the hard cap (maximum total that can be raised).
+    pub fn hard_cap(env: Env) -> i128 {
+        env.storage().instance().get(&DataKey::HardCap).unwrap()
     }
 
     /// Returns the campaign deadline.
