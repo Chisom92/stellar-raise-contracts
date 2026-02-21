@@ -50,6 +50,13 @@ pub struct PlatformConfig {
 /// Represents all storage keys used by the crowdfund contract.
 #[derive(Clone)]
 #[contracttype]
+pub struct Contribution {
+    pub amount: i128,
+    pub is_early_bird: bool,
+}
+
+#[derive(Clone)]
+#[contracttype]
 pub struct CampaignStats {
     /// Total amount raised so far.
     pub total_raised: i128,
@@ -165,6 +172,16 @@ impl CrowdfundContract {
             return Err(ContractError::AlreadyInitialized);
         }
 
+        let eb_deadline = match early_bird_deadline {
+            Some(eb) => {
+                if eb >= deadline {
+                    panic!("early bird deadline must be before campaign deadline");
+                }
+                eb
+            }
+            None => core::cmp::min(env.ledger().timestamp() + 86400, deadline.saturating_sub(1)),
+        };
+
         creator.require_auth();
 
         // Validate platform fee if provided.
@@ -184,7 +201,9 @@ impl CrowdfundContract {
         env.storage().instance().set(&DataKey::Title, &title);
         env.storage().instance().set(&DataKey::Description, &description);
         env.storage().instance().set(&DataKey::TotalRaised, &0i128);
-        env.storage().instance().set(&DataKey::Status, &Status::Active);
+        env.storage()
+            .instance()
+            .set(&DataKey::Status, &Status::Active);
 
         let empty_contributors: Vec<Address> = Vec::new(&env);
         env.storage()
@@ -197,6 +216,32 @@ impl CrowdfundContract {
             .set(&DataKey::Roadmap, &empty_roadmap);
 
         Ok(())
+    }
+
+    /// Adds addresses to the campaign's whitelist.
+    ///
+    /// This function is restricted to the campaign creator and can only be
+    /// called while the campaign is Active.
+    pub fn add_to_whitelist(env: Env, addresses: Vec<Address>) {
+        if addresses.is_empty() {
+            panic!("addresses list must not be empty");
+        }
+
+        let status: Status = env.storage().instance().get(&DataKey::Status).unwrap();
+        if status != Status::Active {
+            panic!("campaign is not active");
+        }
+
+        let creator: Address = env.storage().instance().get(&DataKey::Creator).unwrap();
+        creator.require_auth();
+
+        if !env.storage().instance().has(&DataKey::WhitelistEnabled) {
+            env.storage().instance().set(&DataKey::WhitelistEnabled, &true);
+        }
+
+        for address in addresses.iter() {
+            env.storage().instance().set(&DataKey::Whitelist(address), &true);
+        }
     }
 
     /// Contribute tokens to the campaign.
@@ -598,6 +643,14 @@ impl CrowdfundContract {
             title,
             description,
         }
+    }
+ 
+    /// Returns true if the address is whitelisted.
+    pub fn is_whitelisted(env: Env, address: Address) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Whitelist(address))
+            .unwrap_or(false)
     }
 
     /// Returns comprehensive campaign statistics.
