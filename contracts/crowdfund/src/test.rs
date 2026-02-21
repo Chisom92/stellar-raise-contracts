@@ -1,3 +1,5 @@
+#![allow(unused_doc_comments)]
+
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     token, Address, Env,

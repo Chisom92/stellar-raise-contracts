@@ -95,6 +95,14 @@ pub enum DataKey {
     Status,
     /// Minimum contribution amount.
     MinContribution,
+    /// Individual pledge by address (for conditional pledges).
+    Pledge(Address),
+    /// Total amount pledged but not yet claimed.
+    TotalPledged,
+    /// Stretch goals for bonus milestones.
+    StretchGoals,
+    /// List of all pledgers (for conditional pledges).
+    Pledgers,
     /// List of roadmap items with dates and descriptions.
     Roadmap,
     /// The address authorized to upgrade the contract.
@@ -340,17 +348,11 @@ impl CrowdfundContract {
 
         // Update the pledger's running total.
         let pledge_key = DataKey::Pledge(pledger.clone());
-        let prev: i128 = env
-            .storage()
-            .persistent()
-            .get(&pledge_key)
-            .unwrap_or(0);
+        let prev: i128 = env.storage().persistent().get(&pledge_key).unwrap_or(0);
         env.storage()
             .persistent()
             .set(&pledge_key, &(prev + amount));
-        env.storage()
-            .persistent()
-            .extend_ttl(&pledge_key, 100, 100);
+        env.storage().persistent().extend_ttl(&pledge_key, 100, 100);
 
         // Update the global total pledged.
         let total_pledged: i128 = env
@@ -379,10 +381,8 @@ impl CrowdfundContract {
         }
 
         // Emit pledge event
-        env.events().publish(
-            ("campaign", "pledged"),
-            (pledger, amount),
-        );
+        env.events()
+            .publish(("campaign", "pledged"), (pledger, amount));
 
         Ok(())
     }
@@ -428,22 +428,14 @@ impl CrowdfundContract {
         // Collect pledges from all pledgers
         for pledger in pledgers.iter() {
             let pledge_key = DataKey::Pledge(pledger.clone());
-            let amount: i128 = env
-                .storage()
-                .persistent()
-                .get(&pledge_key)
-                .unwrap_or(0);
+            let amount: i128 = env.storage().persistent().get(&pledge_key).unwrap_or(0);
             if amount > 0 {
                 // Transfer tokens from pledger to contract
                 token_client.transfer(&pledger, &env.current_contract_address(), &amount);
 
                 // Clear the pledge
-                env.storage()
-                    .persistent()
-                    .set(&pledge_key, &0i128);
-                env.storage()
-                    .persistent()
-                    .extend_ttl(&pledge_key, 100, 100);
+                env.storage().persistent().set(&pledge_key, &0i128);
+                env.storage().persistent().extend_ttl(&pledge_key, 100, 100);
             }
         }
 
@@ -453,15 +445,11 @@ impl CrowdfundContract {
             .set(&DataKey::TotalRaised, &(total_raised + total_pledged));
 
         // Reset total pledged
-        env.storage()
-            .instance()
-            .set(&DataKey::TotalPledged, &0i128);
+        env.storage().instance().set(&DataKey::TotalPledged, &0i128);
 
         // Emit pledges collected event
-        env.events().publish(
-            ("campaign", "pledges_collected"),
-            total_pledged,
-        );
+        env.events()
+            .publish(("campaign", "pledges_collected"), total_pledged);
 
         Ok(())
     }
@@ -960,10 +948,7 @@ impl CrowdfundContract {
     /// Returns the pledge of a specific address.
     pub fn pledge_amount(env: Env, pledger: Address) -> i128 {
         let pledge_key = DataKey::Pledge(pledger);
-        env.storage()
-            .persistent()
-            .get(&pledge_key)
-            .unwrap_or(0)
+        env.storage().persistent().get(&pledge_key).unwrap_or(0)
     }
 
     /// Returns the total amount pledged (not yet transferred).
@@ -1086,5 +1071,4 @@ impl CrowdfundContract {
     pub fn token(env: Env) -> Address {
         env.storage().instance().get(&DataKey::Token).unwrap()
     }
-
 }
