@@ -47,6 +47,14 @@ pub struct PlatformConfig {
     pub fee_bps: u32,
 }
 
+/// A reward tier with a name and minimum contribution amount to qualify.
+#[derive(Clone)]
+#[contracttype]
+pub struct RewardTier {
+    pub name: String,
+    pub min_amount: i128,
+}
+
 /// Represents all storage keys used by the crowdfund contract.
 #[derive(Clone)]
 #[contracttype]
@@ -99,6 +107,16 @@ pub enum DataKey {
     SocialLinks,
     /// Platform configuration for fee handling.
     PlatformConfig,
+    /// List of reward tiers (name + min_amount).
+    RewardTiers,
+    /// Individual pledge by address.
+    Pledge(Address),
+    /// List of all pledger addresses.
+    Pledgers,
+    /// Total amount pledged (not yet collected).
+    TotalPledged,
+    /// List of stretch goal milestones.
+    StretchGoals,
 }
 
 // ── Contract Error ──────────────────────────────────────────────────────────
@@ -164,14 +182,6 @@ impl CrowdfundContract {
         env.storage().instance().set(&DataKey::Creator, &creator);
         env.storage().instance().set(&DataKey::Token, &token);
 
-        /// Returns the list of all contributor addresses.
-        pub fn contributors(env: Env) -> Vec<Address> {
-            env.storage()
-                .instance()
-                .get(&DataKey::Contributors)
-                .unwrap_or(Vec::new(&env))
-        }
-
         env.storage().instance().set(&DataKey::Goal, &goal);
         env.storage().instance().set(&DataKey::Deadline, &deadline);
         env.storage()
@@ -191,6 +201,11 @@ impl CrowdfundContract {
         env.storage()
             .instance()
             .set(&DataKey::Roadmap, &empty_roadmap);
+
+        let empty_reward_tiers: Vec<RewardTier> = Vec::new(&env);
+        env.storage()
+            .instance()
+            .set(&DataKey::RewardTiers, &empty_reward_tiers);
 
         Ok(())
     }
@@ -773,6 +788,89 @@ impl CrowdfundContract {
         env.storage()
             .instance()
             .set(&DataKey::StretchGoals, &stretch_goals);
+    }
+
+    /// Add a reward tier (creator only). Rejects min_amount <= 0.
+    pub fn add_reward_tier(env: Env, creator: Address, name: String, min_amount: i128) {
+        let status: Status = env.storage().instance().get(&DataKey::Status).unwrap();
+        if status != Status::Active {
+            panic!("campaign is not active");
+        }
+
+        let stored_creator: Address = env.storage().instance().get(&DataKey::Creator).unwrap();
+        if creator != stored_creator {
+            panic!("not authorized");
+        }
+        creator.require_auth();
+
+        if min_amount <= 0 {
+            panic!("min_amount must be greater than 0");
+        }
+
+        let mut tiers: Vec<RewardTier> = env
+            .storage()
+            .instance()
+            .get(&DataKey::RewardTiers)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        tiers.push_back(RewardTier {
+            name: name.clone(),
+            min_amount,
+        });
+        env.storage()
+            .instance()
+            .set(&DataKey::RewardTiers, &tiers);
+
+        env.events()
+            .publish(("campaign", "reward_tier_added"), (name, min_amount));
+    }
+
+    /// Returns the full ordered list of reward tiers.
+    pub fn reward_tiers(env: Env) -> Vec<RewardTier> {
+        env.storage()
+            .instance()
+            .get(&DataKey::RewardTiers)
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Returns the highest tier name the user's contribution qualifies for,
+    /// or None if the user has not contributed or no tiers are defined.
+    /// Tiers are evaluated by min_amount descending (highest qualifying tier wins).
+    pub fn get_user_tier(env: Env, user: Address) -> Option<String> {
+        let contribution: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contribution(user))
+            .unwrap_or(0);
+
+        if contribution <= 0 {
+            return None;
+        }
+
+        let tiers: Vec<RewardTier> = env
+            .storage()
+            .instance()
+            .get(&DataKey::RewardTiers)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        if tiers.len() == 0 {
+            return None;
+        }
+
+        let mut best: Option<RewardTier> = None;
+        for tier in tiers.iter() {
+            if contribution >= tier.min_amount {
+                let is_better = match &best {
+                    None => true,
+                    Some(ref b) => tier.min_amount > b.min_amount,
+                };
+                if is_better {
+                    best = Some(tier.clone());
+                }
+            }
+        }
+
+        best.map(|t| t.name)
     }
 
     /// Returns the next unmet stretch goal milestone.

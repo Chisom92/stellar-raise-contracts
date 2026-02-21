@@ -869,6 +869,226 @@ fn test_contribute_above_minimum() {
     assert_eq!(client.contribution(&contributor), 50_000);
 }
 
+// ── Tiered Rewards Tests ───────────────────────────────────────────────────
+
+#[test]
+fn test_get_user_tier_bronze_level() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    client.initialize(
+        &creator,
+        &token_address,
+        &goal,
+        &deadline,
+        &min_contribution,
+        &None,
+    );
+
+    let bronze = soroban_sdk::String::from_str(&env, "Bronze");
+    let silver = soroban_sdk::String::from_str(&env, "Silver");
+    let gold = soroban_sdk::String::from_str(&env, "Gold");
+    client.add_reward_tier(&creator, &bronze, &10_000);
+    client.add_reward_tier(&creator, &silver, &100_000);
+    client.add_reward_tier(&creator, &gold, &500_000);
+
+    let contributor = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &contributor, 50_000);
+    client.contribute(&contributor, &50_000);
+
+    let tier = client.get_user_tier(&contributor);
+    assert!(tier.is_some());
+    assert_eq!(tier.unwrap(), bronze);
+}
+
+#[test]
+fn test_get_user_tier_gold_level() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    client.initialize(
+        &creator,
+        &token_address,
+        &goal,
+        &deadline,
+        &min_contribution,
+        &None,
+    );
+
+    let bronze = soroban_sdk::String::from_str(&env, "Bronze");
+    let silver = soroban_sdk::String::from_str(&env, "Silver");
+    let gold = soroban_sdk::String::from_str(&env, "Gold");
+    client.add_reward_tier(&creator, &bronze, &10_000);
+    client.add_reward_tier(&creator, &silver, &100_000);
+    client.add_reward_tier(&creator, &gold, &500_000);
+
+    let contributor = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &contributor, 600_000);
+    client.contribute(&contributor, &600_000);
+
+    let tier = client.get_user_tier(&contributor);
+    assert!(tier.is_some());
+    assert_eq!(tier.unwrap(), gold);
+}
+
+#[test]
+fn test_get_user_tier_non_contributor_returns_none() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    client.initialize(
+        &creator,
+        &token_address,
+        &goal,
+        &deadline,
+        &min_contribution,
+        &None,
+    );
+
+    let bronze = soroban_sdk::String::from_str(&env, "Bronze");
+    client.add_reward_tier(&creator, &bronze, &10_000);
+
+    let non_contributor = Address::generate(&env);
+    let tier = client.get_user_tier(&non_contributor);
+    assert!(tier.is_none());
+}
+
+#[test]
+fn test_get_user_tier_no_tiers_defined_returns_none() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    client.initialize(
+        &creator,
+        &token_address,
+        &goal,
+        &deadline,
+        &min_contribution,
+        &None,
+    );
+
+    let contributor = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &contributor, 500_000);
+    client.contribute(&contributor, &500_000);
+
+    let tier = client.get_user_tier(&contributor);
+    assert!(tier.is_none());
+}
+
+#[test]
+fn test_get_user_tier_highest_qualifying_tier_returned() {
+    let (env, client, creator, token_address, admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    client.initialize(
+        &creator,
+        &token_address,
+        &goal,
+        &deadline,
+        &min_contribution,
+        &None,
+    );
+
+    let bronze = soroban_sdk::String::from_str(&env, "Bronze");
+    let silver = soroban_sdk::String::from_str(&env, "Silver");
+    let gold = soroban_sdk::String::from_str(&env, "Gold");
+    client.add_reward_tier(&creator, &bronze, &10_000);
+    client.add_reward_tier(&creator, &silver, &100_000);
+    client.add_reward_tier(&creator, &gold, &500_000);
+
+    let contributor = Address::generate(&env);
+    mint_to(&env, &token_address, &admin, &contributor, 1_000_000);
+    client.contribute(&contributor, &1_000_000);
+
+    let tier = client.get_user_tier(&contributor);
+    assert!(tier.is_some());
+    assert_eq!(tier.unwrap(), gold);
+}
+
+#[test]
+#[should_panic]
+fn test_add_reward_tier_non_creator_rejected() {
+    let (env, client, creator, token_address, _admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    client.initialize(
+        &creator,
+        &token_address,
+        &goal,
+        &deadline,
+        &min_contribution,
+        &None,
+    );
+
+    let non_creator = Address::generate(&env);
+    let bronze = soroban_sdk::String::from_str(&env, "Bronze");
+    client.add_reward_tier(&non_creator, &bronze, &10_000);
+}
+
+#[test]
+#[should_panic(expected = "min_amount must be greater than 0")]
+fn test_add_reward_tier_rejects_zero_min_amount() {
+    let (env, client, creator, token_address, _admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    client.initialize(
+        &creator,
+        &token_address,
+        &goal,
+        &deadline,
+        &min_contribution,
+        &None,
+    );
+
+    let bronze = soroban_sdk::String::from_str(&env, "Bronze");
+    client.add_reward_tier(&creator, &bronze, &0);
+}
+
+#[test]
+fn test_reward_tiers_view() {
+    let (env, client, creator, token_address, _admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    client.initialize(
+        &creator,
+        &token_address,
+        &goal,
+        &deadline,
+        &min_contribution,
+        &None,
+    );
+
+    assert_eq!(client.reward_tiers().len(), 0);
+
+    let bronze = soroban_sdk::String::from_str(&env, "Bronze");
+    let silver = soroban_sdk::String::from_str(&env, "Silver");
+    client.add_reward_tier(&creator, &bronze, &10_000);
+    client.add_reward_tier(&creator, &silver, &100_000);
+
+    let tiers = client.reward_tiers();
+    assert_eq!(tiers.len(), 2);
+    assert_eq!(tiers.get(0).unwrap().name, bronze);
+    assert_eq!(tiers.get(0).unwrap().min_amount, 10_000);
+    assert_eq!(tiers.get(1).unwrap().name, silver);
+    assert_eq!(tiers.get(1).unwrap().min_amount, 100_000);
+}
+
 // ── Roadmap Tests ──────────────────────────────────────────────────────────
 
 #[test]
@@ -1349,106 +1569,11 @@ fn test_add_single_stretch_goal() {
         &None,
     );
 
+    let stretch_milestone: i128 = 1_500_000;
+    client.add_stretch_goal(&stretch_milestone);
 
-    let deadline = env.ledger().timestamp() + 3600;
-    let goal: i128 = 1_000_000;
-    let min_contribution: i128 = 1_000;
-    client.initialize(
-        &creator,
-        &token_address,
-        &goal,
-        &deadline,
-        &min_contribution,
-        &None,
-    );
-
-
-    let (env, client, creator, token_address, admin) = setup_env();
-
-    let deadline = env.ledger().timestamp() + 3600;
-    let goal: i128 = 1_000_000;
-    let min_contribution: i128 = 1_000;
-    client.initialize(
-        &creator,
-        &token_address,
-        &goal,
-        &deadline,
-        &min_contribution,
-        &None,
-    );
-
-
-    let (env, client, creator, token_address, admin) = setup_env();
-
-    let deadline = env.ledger().timestamp() + 3600;
-    let goal: i128 = 1_000_000;
-    let min_contribution: i128 = 1_000;
-    client.initialize(
-        &creator,
-        &token_address,
-        &goal,
-        &deadline,
-        &min_contribution,
-        &None,
-    );
-
-
-
-    let deadline = env.ledger().timestamp() + 3600;
-    let goal: i128 = 1_000_000;
-    let min_contribution: i128 = 1_000;
-    client.initialize(
-        &creator,
-        &token_address,
-        &goal,
-        &deadline,
-        &min_contribution,
-        &None,
-    );
-
-
-
-    let deadline = env.ledger().timestamp() + 3600;
-    let goal: i128 = 1_000_000;
-    let min_contribution: i128 = 1_000;
-    client.initialize(
-        &creator,
-        &token_address,
-        &goal,
-        &deadline,
-        &min_contribution,
-        &None,
-    );
-
-
-
-    let deadline = env.ledger().timestamp() + 3600;
-    let goal: i128 = 1_000_000;
-    let min_contribution: i128 = 1_000;
-    client.initialize(
-        &creator,
-        &token_address,
-        &goal,
-        &deadline,
-        &min_contribution,
-        &None,
-    );
-
-
-
-    let deadline = env.ledger().timestamp() + 3600;
-    let goal: i128 = 1_000_000;
-    let min_contribution: i128 = 1_000;
-    client.initialize(
-        &creator,
-        &token_address,
-        &goal,
-        &deadline,
-        &min_contribution,
-        &None,
-    );
+    assert_eq!(client.current_milestone(), stretch_milestone);
 }
-
 
 // ── Property-Based Fuzz Tests with Proptest ────────────────────────────────
 
