@@ -18,6 +18,13 @@ pub enum Status {
 
 #[derive(Clone)]
 #[contracttype]
+pub struct Contribution {
+    pub amount: i128,
+    pub is_early_bird: bool,
+}
+
+#[derive(Clone)]
+#[contracttype]
 pub struct CampaignStats {
     pub total_raised: i128,
     pub goal: i128,
@@ -48,6 +55,8 @@ pub enum DataKey {
     Status,
     /// Minimum contribution amount.
     MinContribution,
+    /// Deadline for the "Early Bird" bonus.
+    EarlyBirdDeadline,
 }
 
 // ── Contract ────────────────────────────────────────────────────────────────
@@ -63,8 +72,9 @@ impl CrowdfundContract {
     /// * `creator`          – The campaign creator's address.
     /// * `token`            – The token contract address used for contributions.
     /// * `goal`             – The funding goal (in the token's smallest unit).
-    /// * `deadline`         – The campaign deadline as a ledger timestamp.
-    /// * `min_contribution` – The minimum contribution amount.
+    /// * `deadline`            – The campaign deadline as a ledger timestamp.
+    /// * `min_contribution`    – The minimum contribution amount.
+    /// * `early_bird_deadline` – Optional custom early bird deadline.
     pub fn initialize(
         env: Env,
         creator: Address,
@@ -72,11 +82,22 @@ impl CrowdfundContract {
         goal: i128,
         deadline: u64,
         min_contribution: i128,
+        early_bird_deadline: Option<u64>,
     ) {
         // Prevent re-initialization.
         if env.storage().instance().has(&DataKey::Creator) {
             panic!("already initialized");
         }
+
+        let eb_deadline = match early_bird_deadline {
+            Some(eb) => {
+                if eb >= deadline {
+                    panic!("early bird deadline must be before campaign deadline");
+                }
+                eb
+            }
+            None => core::cmp::min(env.ledger().timestamp() + 86400, deadline.saturating_sub(1)),
+        };
 
         creator.require_auth();
 
@@ -84,9 +105,16 @@ impl CrowdfundContract {
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::Goal, &goal);
         env.storage().instance().set(&DataKey::Deadline, &deadline);
-        env.storage().instance().set(&DataKey::MinContribution, &min_contribution);
+        env.storage()
+            .instance()
+            .set(&DataKey::MinContribution, &min_contribution);
+        env.storage()
+            .instance()
+            .set(&DataKey::EarlyBirdDeadline, &eb_deadline);
         env.storage().instance().set(&DataKey::TotalRaised, &0i128);
-        env.storage().instance().set(&DataKey::Status, &Status::Active);
+        env.storage()
+            .instance()
+            .set(&DataKey::Status, &Status::Active);
 
         let empty_contributors: Vec<Address> = Vec::new(&env);
         env.storage()
@@ -122,14 +150,35 @@ impl CrowdfundContract {
         );
 
         // Update the contributor's running total.
-        let prev: i128 = env
+        let mut contribution: Contribution = env
             .storage()
             .instance()
             .get(&DataKey::Contribution(contributor.clone()))
-            .unwrap_or(0);
+            .unwrap_or(Contribution {
+                amount: 0,
+                is_early_bird: false,
+            });
+
+        contribution.amount += amount;
+
+        let eb_deadline: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::EarlyBirdDeadline)
+            .unwrap();
+        if env.ledger().timestamp() <= eb_deadline {
+            if !contribution.is_early_bird {
+                contribution.is_early_bird = true;
+                env.events().publish(
+                    (env.current_contract_address(), soroban_sdk::symbol_short!("eb_pledge")),
+                    contributor.clone(),
+                );
+            }
+        }
+
         env.storage()
             .instance()
-            .set(&DataKey::Contribution(contributor.clone()), &(prev + amount));
+            .set(&DataKey::Contribution(contributor.clone()), &contribution);
 
         // Update the global total raised.
         let total: i128 = env
@@ -215,20 +264,24 @@ impl CrowdfundContract {
             .unwrap();
 
         for contributor in contributors.iter() {
-            let amount: i128 = env
+            let mut contribution: Contribution = env
                 .storage()
                 .instance()
                 .get(&DataKey::Contribution(contributor.clone()))
-                .unwrap_or(0);
-            if amount > 0 {
+                .unwrap_or(Contribution {
+                    amount: 0,
+                    is_early_bird: false,
+                });
+            if contribution.amount > 0 {
                 token_client.transfer(
                     &env.current_contract_address(),
                     &contributor,
-                    &amount,
+                    &contribution.amount,
                 );
+                contribution.amount = 0;
                 env.storage()
                     .instance()
-                    .set(&DataKey::Contribution(contributor), &0i128);
+                    .set(&DataKey::Contribution(contributor), &contribution);
             }
         }
 
@@ -257,20 +310,24 @@ impl CrowdfundContract {
             .unwrap();
 
         for contributor in contributors.iter() {
-            let amount: i128 = env
+            let mut contribution: Contribution = env
                 .storage()
                 .instance()
                 .get(&DataKey::Contribution(contributor.clone()))
-                .unwrap_or(0);
-            if amount > 0 {
+                .unwrap_or(Contribution {
+                    amount: 0,
+                    is_early_bird: false,
+                });
+            if contribution.amount > 0 {
                 token_client.transfer(
                     &env.current_contract_address(),
                     &contributor,
-                    &amount,
+                    &contribution.amount,
                 );
+                contribution.amount = 0;
                 env.storage()
                     .instance()
-                    .set(&DataKey::Contribution(contributor), &0i128);
+                    .set(&DataKey::Contribution(contributor), &contribution);
             }
         }
 
@@ -300,15 +357,44 @@ impl CrowdfundContract {
 
     /// Returns the contribution of a specific address.
     pub fn contribution(env: Env, contributor: Address) -> i128 {
-        env.storage()
+        let contrib: Contribution = env
+            .storage()
             .instance()
             .get(&DataKey::Contribution(contributor))
-            .unwrap_or(0)
+            .unwrap_or(Contribution {
+                amount: 0,
+                is_early_bird: false,
+            });
+        contrib.amount
     }
 
     /// Returns the minimum contribution amount.
     pub fn min_contribution(env: Env) -> i128 {
-        env.storage().instance().get(&DataKey::MinContribution).unwrap()
+        env.storage()
+            .instance()
+            .get(&DataKey::MinContribution)
+            .unwrap()
+    }
+
+    /// Returns true if the address is an early bird contributor.
+    pub fn is_early_bird(env: Env, address: Address) -> bool {
+        let contrib: Contribution = env
+            .storage()
+            .instance()
+            .get(&DataKey::Contribution(address))
+            .unwrap_or(Contribution {
+                amount: 0,
+                is_early_bird: false,
+            });
+        contrib.is_early_bird
+    }
+
+    /// Returns the early bird deadline.
+    pub fn early_bird_deadline(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::EarlyBirdDeadline)
+            .unwrap()
     }
 
     /// Returns comprehensive campaign statistics.
@@ -331,9 +417,16 @@ impl CrowdfundContract {
             let average = total_raised / contributor_count as i128;
             let mut largest = 0i128;
             for contributor in contributors.iter() {
-                let amount: i128 = env.storage().instance().get(&DataKey::Contribution(contributor)).unwrap_or(0);
-                if amount > largest {
-                    largest = amount;
+                let contrib: Contribution = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::Contribution(contributor))
+                    .unwrap_or(Contribution {
+                        amount: 0,
+                        is_early_bird: false,
+                    });
+                if contrib.amount > largest {
+                    largest = contrib.amount;
                 }
             }
             (average, largest)
