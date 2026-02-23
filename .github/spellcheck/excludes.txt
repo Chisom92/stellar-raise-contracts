@@ -1,0 +1,9 @@
+# Exclude generated files and binary formats
+^target/
+^Cargo.lock
+\.ico$
+\.png$
+\.jpg$
+\.wasm$
+\.json$
+^\.git/
