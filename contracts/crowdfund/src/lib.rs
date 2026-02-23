@@ -77,6 +77,14 @@ pub struct CampaignStats {
 #[derive(Clone)]
 #[contracttype]
 pub enum DataKey {
+    /// Whether the campaign is paused.
+    Paused,
+    /// The hard cap for the campaign.
+    HardCap,
+    /// The campaign category.
+    Category,
+    /// The campaign tags.
+    Tags,
     /// The address of the campaign creator.
     Creator,
     /// The token used for contributions (e.g. USDC).
@@ -95,20 +103,14 @@ pub enum DataKey {
     Status,
     /// Minimum contribution amount.
     MinContribution,
-    /// Individual pledge by address (for conditional pledges).
-    Pledge(Address),
-    /// Total amount pledged but not yet claimed.
-    TotalPledged,
-    /// Stretch goals for bonus milestones.
-    StretchGoals,
-    /// List of all pledgers (for conditional pledges).
-    Pledgers,
     /// List of roadmap items with dates and descriptions.
     Roadmap,
     /// The address authorized to upgrade the contract.
     Admin,
     /// Campaign title.
     Title,
+    /// Last contribution timestamp per address (for rate limiting).
+    LastContributionTime(Address),
     /// Campaign description.
     Description,
     /// Campaign social links.
@@ -127,6 +129,10 @@ pub enum DataKey {
     StretchGoals,
 }
 
+// ── Rate Limiting ──────────────────────────────────────────────────────────
+/// Minimum seconds required between contributions from the same address.
+const CONTRIBUTION_COOLDOWN: u64 = 5;
+
 // ── Contract Error ──────────────────────────────────────────────────────────
 
 use soroban_sdk::contracterror;
@@ -143,6 +149,8 @@ pub enum ContractError {
     Overflow = 6,
     InvalidHardCap = 7,
     HardCapExceeded = 8,
+    RateLimitExceeded = 9,
+    ContractPaused = 10,
 }
 
 // ── Contract ────────────────────────────────────────────────────────────────
@@ -167,12 +175,13 @@ impl CrowdfundContract {
     /// # Panics
     /// * If already initialized.
     /// * If platform fee exceeds 10,000 (100%).
+    #[allow(clippy::too_many_arguments)]
     pub fn initialize(
         env: Env,
         creator: Address,
         token: Address,
         goal: i128,
-        hard_cap: i128,
+        _hard_cap: i128,
         deadline: u64,
         min_contribution: i128,
         platform_config: Option<PlatformConfig>,
@@ -180,10 +189,6 @@ impl CrowdfundContract {
         // Prevent re-initialization.
         if env.storage().instance().has(&DataKey::Creator) {
             return Err(ContractError::AlreadyInitialized);
-        }
-
-        if category.len() == 0 {
-            panic!("category must not be empty");
         }
 
         creator.require_auth();
@@ -232,7 +237,20 @@ impl CrowdfundContract {
     /// The contributor must authorize the call. Contributions are rejected
     /// after the deadline has passed.
     pub fn contribute(env: Env, contributor: Address, amount: i128) -> Result<(), ContractError> {
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+        // ── Rate limiting: enforce cooldown between contributions ──
+        let now = env.ledger().timestamp();
+        let last_time_key = DataKey::LastContributionTime(contributor.clone());
+        if let Some(last_time) = env.storage().persistent().get::<_, u64>(&last_time_key) {
+            if now < last_time + CONTRIBUTION_COOLDOWN {
+                return Err(ContractError::RateLimitExceeded);
+            }
+        }
+
+        let paused: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false);
         if paused {
             return Err(ContractError::ContractPaused);
         }
@@ -261,17 +279,17 @@ impl CrowdfundContract {
         }
 
         let headroom = hard_cap - total;
-        let effective_amount = if amount <= headroom {
-            amount
-        } else {
-            headroom
-        };
+        let effective_amount = if amount <= headroom { amount } else { headroom };
 
         let token_address: Address = env.storage().instance().get(&DataKey::Token).unwrap();
         let token_client = token::Client::new(&env, &token_address);
 
         // Transfer tokens from the contributor to this contract.
-        token_client.transfer(&contributor, &env.current_contract_address(), &effective_amount);
+        token_client.transfer(
+            &contributor,
+            &env.current_contract_address(),
+            &effective_amount,
+        );
 
         // Update the contributor's running total with overflow protection.
         let contribution_key = DataKey::Contribution(contributor.clone());
@@ -323,10 +341,14 @@ impl CrowdfundContract {
         }
 
         // Emit contribution event
-        env.events().publish(
-            ("campaign", "contributed"),
-            (contributor, effective_amount),
-        );
+        env.events()
+            .publish(("campaign", "contributed"), (contributor, effective_amount));
+
+        // Update last contribution time for rate limiting
+        env.storage().persistent().set(&last_time_key, &now);
+        env.storage()
+            .persistent()
+            .extend_ttl(&last_time_key, 100, 100);
 
         Ok(())
     }
@@ -466,7 +488,11 @@ impl CrowdfundContract {
     /// If a platform fee is configured, deducts the fee and transfers it to
     /// the platform address, then sends the remainder to the creator.
     pub fn withdraw(env: Env) -> Result<(), ContractError> {
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+        let paused: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false);
         if paused {
             return Err(ContractError::ContractPaused);
         }
@@ -536,7 +562,11 @@ impl CrowdfundContract {
     /// Refund all contributors — callable by anyone after the deadline
     /// if the goal was **not** met.
     pub fn refund(env: Env) -> Result<(), ContractError> {
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+        let paused: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false);
         if paused {
             return Err(ContractError::ContractPaused);
         }
@@ -868,9 +898,7 @@ impl CrowdfundContract {
             name: name.clone(),
             min_amount,
         });
-        env.storage()
-            .instance()
-            .set(&DataKey::RewardTiers, &tiers);
+        env.storage().instance().set(&DataKey::RewardTiers, &tiers);
 
         env.events()
             .publish(("campaign", "reward_tier_added"), (name, min_amount));
@@ -904,7 +932,7 @@ impl CrowdfundContract {
             .get(&DataKey::RewardTiers)
             .unwrap_or_else(|| Vec::new(&env));
 
-        if tiers.len() == 0 {
+        if tiers.is_empty() {
             return None;
         }
 
@@ -1008,7 +1036,10 @@ impl CrowdfundContract {
 
     /// Returns the optional descriptive tags.
     pub fn tags(env: Env) -> Vec<soroban_sdk::String> {
-        env.storage().instance().get(&DataKey::Tags).unwrap_or(Vec::new(&env))
+        env.storage()
+            .instance()
+            .get(&DataKey::Tags)
+            .unwrap_or(Vec::new(&env))
     }
 
     /// Returns comprehensive campaign statistics.
