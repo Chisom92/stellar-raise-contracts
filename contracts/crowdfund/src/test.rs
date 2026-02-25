@@ -2160,3 +2160,54 @@ fn test_contributor_count_one_after_single_contribution() {
 
     client.withdraw_contribution(&contributor, &50_000); // should panic
 }
+
+// ── Campaign Active Tests ──────────────────────────────────────────────────
+
+#[test]
+fn test_is_campaign_active_before_deadline() {
+    let (env, client, creator, token_address, _admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    let title = soroban_sdk::String::from_str(&env, "Test Campaign");
+    let description = soroban_sdk::String::from_str(&env, "Test Description");
+
+    client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution, &title, &description, &None);
+
+    assert_eq!(client.is_campaign_active(), true);
+}
+
+#[test]
+fn test_is_campaign_active_at_deadline() {
+    let (env, client, creator, token_address, _admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    let title = soroban_sdk::String::from_str(&env, "Test Campaign");
+    let description = soroban_sdk::String::from_str(&env, "Test Description");
+
+    client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution, &title, &description, &None);
+
+    env.ledger().set_timestamp(deadline);
+
+    assert_eq!(client.is_campaign_active(), true);
+}
+
+#[test]
+fn test_is_campaign_active_after_deadline() {
+    let (env, client, creator, token_address, _admin) = setup_env();
+
+    let deadline = env.ledger().timestamp() + 3600;
+    let goal: i128 = 1_000_000;
+    let min_contribution: i128 = 1_000;
+    let title = soroban_sdk::String::from_str(&env, "Test Campaign");
+    let description = soroban_sdk::String::from_str(&env, "Test Description");
+
+    client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution, &title, &description, &None);
+
+    env.ledger().set_timestamp(deadline + 1);
+
+    assert_eq!(client.is_campaign_active(), false);
+}
