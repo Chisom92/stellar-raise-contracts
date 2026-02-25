@@ -1,6 +1,8 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, IntoVal, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, Address, BytesN, Env, IntoVal, Symbol, Vec,
+};
 
 #[cfg(test)]
 mod test;
@@ -46,10 +48,21 @@ impl FactoryContract {
             .deploy_v2(wasm_hash, ());
 
         // Initialize the deployed contract.
+        // Keep factory API stable: use default min contribution and no platform config.
+        let min_contribution: i128 = 1_000;
+        let no_platform_config: Option<soroban_sdk::Val> = None;
         let _: () = env.invoke_contract(
             &deployed_address,
             &Symbol::new(&env, "initialize"),
-            soroban_sdk::vec![&env, creator.into_val(&env), token.into_val(&env), goal.into_val(&env), deadline.into_val(&env)],
+            soroban_sdk::vec![
+                &env,
+                creator.into_val(&env),
+                token.into_val(&env),
+                goal.into_val(&env),
+                deadline.into_val(&env),
+                min_contribution.into_val(&env),
+                no_platform_config.into_val(&env),
+            ],
         );
 
         // Add to registry.

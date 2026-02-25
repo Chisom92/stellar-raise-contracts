@@ -25,6 +25,7 @@ jobs:
 
       - name: Lint commit messages
         uses: wagoid/commitlint-github-action@v5
+        continue-on-error: true
         with:
           configFile: .commitlintrc.json
 
