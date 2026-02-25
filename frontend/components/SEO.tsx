@@ -58,6 +58,12 @@ const SEO = ({
       <meta name="twitter:description" content={description} />
       <meta name="twitter:image" content={`${SITE_URL}${image}`} />
 
+      {/* Favicon */}
+      <link rel="icon" href="/favicon.ico" />
+      <link rel="icon" type="image/svg+xml" href="/favicon-32x32.svg" sizes="32x32" />
+      <link rel="icon" type="image/svg+xml" href="/favicon-64x64.svg" sizes="64x64" />
+      <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
+
       {/* Theme color */}
       <meta name="theme-color" content="#4f46e5" />
     </Head>
