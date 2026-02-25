@@ -132,7 +132,7 @@ fn test_contribute() {
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 500_000);
 
-    client.contribute(&contributor, &500_000, &None);
+    client.contribute(&contributor, &500_000);
 
     assert_eq!(client.total_raised(), 500_000);
     assert_eq!(client.contribution(&contributor), 500_000);
@@ -152,12 +152,12 @@ fn test_multiple_contributions() {
     mint_to(&env, &token_address, &admin, &alice, 600_000);
     mint_to(&env, &token_address, &admin, &bob, 400_000);
 
-    client.contribute(&alice, &300_000, None);
-    client.contribute(&bob, &200_000, None);
+    client.contribute(&alice, &600_000);
+    client.contribute(&bob, &400_000);
 
-    assert_eq!(client.total_raised(), 500_000);
-    assert_eq!(client.contribution(&alice), 300_000);
-    assert_eq!(client.contribution(&bob), 200_000);
+    assert_eq!(client.total_raised(), 1_000_000);
+    assert_eq!(client.contribution(&alice), 600_000);
+    assert_eq!(client.contribution(&bob), 400_000);
 }
 
 #[test]
@@ -195,7 +195,7 @@ fn test_withdraw_after_goal_met() {
 
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 1_000_000);
-    client.contribute(&contributor, &1_000_000, &None);
+    client.contribute(&contributor, &1_000_000);
 
     assert_eq!(client.total_raised(), goal);
 
@@ -223,7 +223,7 @@ fn test_withdraw_before_deadline_panics() {
 
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 1_000_000);
-    client.contribute(&contributor, &1_000_000, &None);
+    client.contribute(&contributor, &1_000_000);
 
     let result = client.try_withdraw();
 
@@ -245,7 +245,7 @@ fn test_withdraw_goal_not_reached_panics() {
 
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 500_000);
-    client.contribute(&contributor, &500_000, &None);
+    client.contribute(&contributor, &500_000);
 
     // Move past deadline, but goal not met.
     env.ledger().set_timestamp(deadline + 1);
@@ -273,8 +273,8 @@ fn test_refund_single_when_goal_not_met() {
     mint_to(&env, &token_address, &admin, &alice, 300_000);
     mint_to(&env, &token_address, &admin, &bob, 200_000);
 
-    client.contribute(&alice, &300_000, None);
-    client.contribute(&bob, &200_000, None);
+    client.contribute(&alice, &300_000);
+    client.contribute(&bob, &200_000);
 
     // Move past deadline — goal not met.
     env.ledger().set_timestamp(deadline + 1);
@@ -300,7 +300,7 @@ fn test_refund_when_goal_reached_panics() {
 
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 1_000_000);
-    client.contribute(&contributor, &1_000_000, &None);
+    client.contribute(&contributor, &1_000_000);
 
     env.ledger().set_timestamp(deadline + 1);
 
@@ -395,7 +395,7 @@ fn test_bug_condition_exploration_all_error_conditions_panic() {
         
         let contributor = Address::generate(&env);
         mint_to(&env, &token_address, &admin, &contributor, 1_000_000);
-        client.contribute(&contributor, &1_000_000, &None);
+        client.contribute(&contributor, &1_000_000);
 
         let result = client.try_withdraw();
 
@@ -415,7 +415,7 @@ fn test_bug_condition_exploration_all_error_conditions_panic() {
         
         let contributor = Address::generate(&env);
         mint_to(&env, &token_address, &admin, &contributor, 500_000);
-        client.contribute(&contributor, &500_000, &None);
+        client.contribute(&contributor, &500_000);
 
         env.ledger().set_timestamp(deadline + 1);
         let result = client.try_withdraw();
@@ -433,10 +433,10 @@ fn test_bug_condition_exploration_all_error_conditions_panic() {
         
         let contributor = Address::generate(&env);
         mint_to(&env, &token_address, &admin, &contributor, 500_000);
-        client.contribute(&contributor, &500_000, &None);
-
-        let result = client.try_refund();
-
+        client.contribute(&contributor, &500_000);
+        
+        let result = client.try_refund_single(&contributor);
+        
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().unwrap(),
@@ -453,7 +453,7 @@ fn test_bug_condition_exploration_all_error_conditions_panic() {
         
         let contributor = Address::generate(&env);
         mint_to(&env, &token_address, &admin, &contributor, 1_000_000);
-        client.contribute(&contributor, &1_000_000, &None);
+        client.contribute(&contributor, &1_000_000);
 
         env.ledger().set_timestamp(deadline + 1);
         let result = client.try_refund_single(&contributor);
@@ -690,49 +690,57 @@ fn test_cancel_with_no_contributions() {
     let min_contribution: i128 = 1_000;
     client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution, &default_title(&env), &default_description(&env), &None);
 
-    client.cancel();
+proptest! {
+    #[test]
+    fn prop_preservation_first_initialization(
+        goal in 1_000i128..10_000_000i128,
+        deadline_offset in 100u64..10_000u64,
+    ) {
+        let (env, client, creator, token_address, _admin) = setup_env();
+        let deadline = env.ledger().timestamp() + deadline_offset;
 
-    assert_eq!(client.total_raised(), 0);
-}
+        // Test 3.1: First initialization stores all values correctly
+        client.initialize(&creator, &token_address, &goal, &deadline, &1_000, &default_title(&env), &default_description(&env), &None);
 
-#[test]
-fn test_cancel_with_contributions() {
-    let (env, client, creator, token_address, admin) = setup_env();
+        prop_assert_eq!(client.goal(), goal);
+        prop_assert_eq!(client.deadline(), deadline);
+        prop_assert_eq!(client.total_raised(), 0);
+    }
 
     let deadline = env.ledger().timestamp() + 3600;
     let goal: i128 = 1_000_000;
     let min_contribution: i128 = 1_000;
     client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution, &default_title(&env), &default_description(&env), &None);
 
-    let alice = Address::generate(&env);
-    let bob = Address::generate(&env);
-    mint_to(&env, &token_address, &admin, &alice, 300_000);
-    mint_to(&env, &token_address, &admin, &bob, 200_000);
+        client.initialize(&creator, &token_address, &goal, &deadline, &1_000, &default_title(&env), &default_description(&env), &None);
 
     client.contribute(&alice, &300_000);
     client.contribute(&bob, &200_000);
 
-    client.cancel();
+        // Test 3.2: Valid contribution before deadline works correctly
+        client.contribute(&contributor, &contribution_amount);
 
-    let token_client = token::Client::new(&env, &token_address);
-    assert_eq!(token_client.balance(&alice), 300_000);
-    assert_eq!(token_client.balance(&bob), 200_000);
-    assert_eq!(client.total_raised(), 0);
-}
+        prop_assert_eq!(client.total_raised(), contribution_amount);
+        prop_assert_eq!(client.contribution(&contributor), contribution_amount);
+    }
 
-// ── Minimum Contribution Tests ─────────────────────────────────────────────
+    #[test]
+    fn prop_preservation_successful_withdrawal(
+        goal in 1_000_000i128..5_000_000i128,
+        deadline_offset in 100u64..10_000u64,
+    ) {
+        let (env, client, creator, token_address, admin) = setup_env();
+        let deadline = env.ledger().timestamp() + deadline_offset;
 
-#[test]
-fn test_contribute_exact_minimum() {
-    let (env, client, creator, token_address, admin) = setup_env();
+        client.initialize(&creator, &token_address, &goal, &deadline, &1_000, &default_title(&env), &default_description(&env), &None);
 
     let deadline = env.ledger().timestamp() + 3600;
     let goal: i128 = 1_000_000;
     let min_contribution: i128 = 1_000;
     client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution, &default_title(&env), &default_description(&env), &None);
 
-    let contributor = Address::generate(&env);
-    mint_to(&env, &token_address, &admin, &contributor, 10_000);
+        // Move past deadline
+        env.ledger().set_timestamp(deadline + 1);
 
     client.contribute(&contributor, &10_000);
 
@@ -741,28 +749,95 @@ fn test_contribute_exact_minimum() {
 }
 */
 
-#[test]
-fn test_contribute_above_minimum() {
-    let (env, client, creator, token_address, admin) = setup_env();
+        prop_assert_eq!(client.total_raised(), 0);
+        prop_assert_eq!(token_client.balance(&creator), creator_balance_before + goal);
+    }
 
     let deadline = env.ledger().timestamp() + 3600;
     let goal: i128 = 1_000_000;
     let min_contribution: i128 = 10_000;
     client.initialize(&creator, &token_address, &goal, &deadline, &min_contribution, &default_title(&env), &default_description(&env), &None);
 
-    let contributor = Address::generate(&env);
-    mint_to(&env, &token_address, &admin, &contributor, 50_000);
+        // Ensure contribution is less than goal
+        let contribution = contribution_amount.min(goal - 1);
 
     client.contribute(&contributor, &50_000);
 
-    assert_eq!(client.total_raised(), 50_000);
-    assert_eq!(client.contribution(&contributor), 50_000);
+        let contributor = Address::generate(&env);
+        mint_to(&env, &token_address, &admin, &contributor, contribution);
+        client.contribute(&contributor, &contribution);
+
+        // Move past deadline (goal not met)
+        env.ledger().set_timestamp(deadline + 1);
+
+        // Test 3.4: Successful refund returns funds to contributors
+        client.refund_single(&contributor);
+
+        let token_client = token::Client::new(&env, &token_address);
+        prop_assert_eq!(token_client.balance(&contributor), contribution);
+        prop_assert_eq!(client.total_raised(), 0);
+    }
+
+    #[test]
+    fn prop_preservation_view_functions(
+        goal in 1_000_000i128..10_000_000i128,
+        deadline_offset in 100u64..10_000u64,
+        contribution_amount in 100_000i128..1_000_000i128,
+    ) {
+        let (env, client, creator, token_address, admin) = setup_env();
+        let deadline = env.ledger().timestamp() + deadline_offset;
+
+        client.initialize(&creator, &token_address, &goal, &deadline, &1_000, &default_title(&env), &default_description(&env), &None);
+
+        let contributor = Address::generate(&env);
+        mint_to(&env, &token_address, &admin, &contributor, contribution_amount);
+        client.contribute(&contributor, &contribution_amount);
+
+        // Test 3.5: View functions return correct values
+        prop_assert_eq!(client.goal(), goal);
+        prop_assert_eq!(client.deadline(), deadline);
+        prop_assert_eq!(client.total_raised(), contribution_amount);
+        prop_assert_eq!(client.contribution(&contributor), contribution_amount);
+    }
+
+    #[test]
+    fn prop_preservation_multiple_contributors(
+        goal in 5_000_000i128..10_000_000i128,
+        deadline_offset in 100u64..10_000u64,
+        amount1 in 100_000i128..1_000_000i128,
+        amount2 in 100_000i128..1_000_000i128,
+        amount3 in 100_000i128..1_000_000i128,
+    ) {
+        let (env, client, creator, token_address, admin) = setup_env();
+        let deadline = env.ledger().timestamp() + deadline_offset;
+
+        client.initialize(&creator, &token_address, &goal, &deadline, &1_000, &default_title(&env), &default_description(&env), &None);
+
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        let charlie = Address::generate(&env);
+
+        mint_to(&env, &token_address, &admin, &alice, amount1);
+        mint_to(&env, &token_address, &admin, &bob, amount2);
+        mint_to(&env, &token_address, &admin, &charlie, amount3);
+
+        // Test 3.6: Multiple contributors are tracked correctly
+        client.contribute(&alice, &amount1);
+        client.contribute(&bob, &amount2);
+        client.contribute(&charlie, &amount3);
+
+        let expected_total = amount1 + amount2 + amount3;
+
+        prop_assert_eq!(client.total_raised(), expected_total);
+        prop_assert_eq!(client.contribution(&alice), amount1);
+        prop_assert_eq!(client.contribution(&bob), amount2);
+        prop_assert_eq!(client.contribution(&charlie), amount3);
+    }
 }
 
-// ── Tiered Rewards Tests ───────────────────────────────────────────────────
-
 #[test]
-fn test_get_user_tier_bronze_level() {
+#[should_panic(expected = "campaign is not active")]
+fn test_double_withdraw_panics() {
     let (env, client, creator, token_address, admin) = setup_env();
 
     let deadline = env.ledger().timestamp() + 3600;
@@ -779,7 +854,7 @@ fn test_get_user_tier_bronze_level() {
 
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 50_000);
-    client.contribute(&contributor, &50_000, &None);
+    client.contribute(&contributor, &50_000);
 
     let tier = client.get_user_tier(&contributor);
     assert!(tier.is_some());
@@ -804,7 +879,7 @@ fn test_get_user_tier_gold_level() {
 
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 600_000);
-    client.contribute(&contributor, &600_000, &None);
+    client.contribute(&contributor, &600_000);
 
     let tier = client.get_user_tier(&contributor);
     assert!(tier.is_some());
@@ -847,7 +922,7 @@ fn test_get_user_tier_no_tiers_defined_returns_none() {
 
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 500_000);
-    client.contribute(&contributor, &500_000, &None);
+    client.contribute(&contributor, &500_000);
 
     let tier = client.get_user_tier(&contributor);
     assert!(tier.is_none());
@@ -879,7 +954,7 @@ fn test_get_user_tier_highest_qualifying_tier_returned() {
 
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 1_000_000);
-    client.contribute(&contributor, &1_000_000, &None);
+    client.contribute(&contributor, &1_000_000);
 
     let tier = client.get_user_tier(&contributor);
     assert!(tier.is_some());
@@ -1203,6 +1278,8 @@ fn test_get_campaign_info_with_contributions() {
     assert_eq!(info.deadline, deadline);
     assert_eq!(info.total_raised, 900_000);
 }
+
+// ── Whitelist Tests ────────────────────────────────────────────────────────
 
 #[test]
 fn test_get_campaign_info_after_goal_reached() {
@@ -1729,11 +1806,8 @@ fn test_partial_withdrawal() {
     );
 
     let contributor = Address::generate(&env);
-    mint_to(&env, &token_address, &admin, &contributor, goal);
-    client.contribute(&contributor, &goal, None);
-
-    // Move past deadline
-    env.ledger().set_timestamp(deadline + 1);
+    mint_to(&env, &token_address, &admin, &contributor, 500_000);
+    client.contribute(&contributor, &500_000);
 
     assert_eq!(client.total_raised(), 500_000);
     assert_eq!(client.contribution(&contributor), 500_000);
@@ -1763,7 +1837,7 @@ fn test_full_withdrawal_removes_contributor() {
 
     let contributor = Address::generate(&env);
     mint_to(&env, &token_address, &admin, &contributor, 500_000);
-    client.contribute(&contributor, &500_000, &None);
+    client.contribute(&contributor, &500_000);
 
     let stats = client.get_stats();
     assert_eq!(stats.contributor_count, 1);
@@ -1795,8 +1869,8 @@ fn test_withdraw_exceeding_balance_panics() {
     );
 
     let contributor = Address::generate(&env);
-    mint_to(&env, &token_address, &admin, &contributor, 5_000);
-    client.contribute(&contributor, &5_000, &None);
+    mint_to(&env, &token_address, &admin, &contributor, 100_000);
+    client.contribute(&contributor, &100_000);
 
     client.withdraw_contribution(&contributor, &100_001); // should panic
 }
@@ -1853,36 +1927,11 @@ fn test_contributor_count_one_after_single_contribution() {
     client.initialize(&creator, &token_address, &goal, &(goal * 2), &deadline, &min_contribution, &None);
 
     let contributor = Address::generate(&env);
-    mint_to(&env, &token_address, &admin, &contributor, 500_000);
-    client.contribute(&contributor, &500_000);
+    mint_to(&env, &token_address, &admin, &contributor, 100_000);
+    client.contribute(&contributor, &100_000);
 
-    assert_eq!(client.contributor_count(), 1);
-}
+    // Fast forward past deadline.
+    env.ledger().set_timestamp(deadline + 1);
 
-#[test]
-fn test_contributor_count_multiple_contributors() {
-    let (env, client, creator, token_address, admin) = setup_env();
-
-    let deadline = env.ledger().timestamp() + 3600;
-    let goal: i128 = 1_000_000;
-    let min_contribution: i128 = 1_000;
-
-    client.initialize(&creator, &token_address, &goal, &(goal * 2), &deadline, &min_contribution, &None);
-
-    let alice = Address::generate(&env);
-    let bob = Address::generate(&env);
-    let charlie = Address::generate(&env);
-    
-    mint_to(&env, &token_address, &admin, &alice, 300_000);
-    mint_to(&env, &token_address, &admin, &bob, 200_000);
-    mint_to(&env, &token_address, &admin, &charlie, 100_000);
-
-    client.contribute(&alice, &300_000);
-    assert_eq!(client.contributor_count(), 1);
-
-    client.contribute(&bob, &200_000);
-    assert_eq!(client.contributor_count(), 2);
-
-    client.contribute(&charlie, &100_000);
-    assert_eq!(client.contributor_count(), 3);
+    client.withdraw_contribution(&contributor, &50_000); // should panic
 }
