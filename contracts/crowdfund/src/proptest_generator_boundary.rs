@@ -53,14 +53,14 @@ pub fn is_valid_deadline_offset(offset: u64) -> bool {
 /// Validates that a goal is within the accepted range.
 #[inline]
 pub fn is_valid_goal(goal: i128) -> bool {
-    goal >= GOAL_MIN && goal <= GOAL_MAX
+    (GOAL_MIN..=GOAL_MAX).contains(&goal)
 }
 
 /// Validates that min_contribution is valid for a given goal.
 /// min_contribution must be in [MIN_CONTRIBUTION_FLOOR, goal].
 #[inline]
 pub fn is_valid_min_contribution(min_contribution: i128, goal: i128) -> bool {
-    min_contribution >= MIN_CONTRIBUTION_FLOOR && min_contribution <= goal
+    (MIN_CONTRIBUTION_FLOOR..=goal).contains(&min_contribution)
 }
 
 /// Validates that a contribution amount is >= min_contribution.
