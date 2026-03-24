@@ -258,6 +258,26 @@ pub struct RoadmapItem {
 | 3 | `CampaignStillActive` | Action requires deadline to have passed |
 | 4 | `GoalNotReached` | Withdraw/collect attempted when goal not met |
 | 5 | `GoalReached` | Refund attempted when goal was met |
+
+## Testing and Security Notes
+
+- Test coverage is designed for 95%+ lines in the crowdfund module.
+- Critical code paths covered:
+  - `initialize`: repeated init, platform fee bounds, bonus goal guard.
+  - `contribute`: minimum amount guard, deadline guard, aggregation, overflow protection.
+  - `pledge` / `collect_pledges`: state transition and transfer effect.
+  - `withdraw`: deadline, goal check, platform fee, NFT mint flow.
+  - `refund`, `cancel`, `add_roadmap_item`, `add_stretch_goal`, `current_milestone`, `get_stats`, `bonus_goal`.
+  - `upgrade`: admin-only authorization.
+
+### Security assumptions
+
+1. `creator.require_auth()` and `admin.require_auth()` provide access control in relevant calls.
+2. `platform fee <= 10_000` ensures no more than 100% fees are taken.
+3. `bonus_goal` strict comparison (`> goal`) prevents invalid secondary goal loops.
+4. `contribute` and `collect_pledges` use `checked_add`/`checked_mul` to avoid overflow in numeric operations.
+5. `status` checks in state-transition functions prevent replay / double accounting.
+
 | 6 | `Overflow` | Integer overflow in contribution accounting |
 
 ---

@@ -74,7 +74,7 @@ All requirements have been successfully implemented, tested, and verified.
 
 Each property test generates 1000 random test cases exploring:
 - **Contribution Amounts**: 0, negative, below minimum, exact minimum, above minimum, large values
-- **Deadlines**: Past, current, future (100-100,000 seconds)
+- **Deadlines**: Past, current, future (1,000-1,000,000 seconds)
 - **Goals**: Small (1M), large (100M), met exactly, exceeded, not met
 - **Contributors**: 2-3 contributors with various amounts
 - **Sequences**: Sequential and parallel contributions

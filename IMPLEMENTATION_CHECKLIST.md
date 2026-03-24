@@ -199,7 +199,7 @@ test result: ok. 57 passed; 0 failed; 0 ignored; 0 measured
 ### Deadlines
 - [x] Past deadlines
 - [x] Current time deadlines
-- [x] Future deadlines (100 to 100,000 seconds)
+- [x] Future deadlines (1,000 to 1,000,000 seconds)
 - [x] Contributions before deadline
 - [x] Contributions after deadline
 
