@@ -36,6 +36,7 @@ use refund_single_token::{
 #[path = "refund_single_token.test.rs"]
 mod refund_single_token_test;
 
+pub mod admin_upgrade_mechanism;
 pub mod soroban_sdk_minor;
 #[cfg(test)]
 mod soroban_sdk_minor_test;
@@ -907,15 +908,8 @@ impl CrowdfundContract {
 
     /// Upgrade the contract to a new WASM implementation — admin-only.
     ///
-    /// This function allows the designated admin to upgrade the contract's WASM code
-    /// without changing the contract's address or storage. The new WASM hash must be
-    /// provided and the caller must be authorized as the admin.
-    ///
-    /// # Arguments
-    /// * `new_wasm_hash` – The SHA-256 hash of the new WASM binary to deploy.
-    ///
-    /// # Panics
-    /// * If the caller is not the admin.
+    /// Delegates to [`admin_upgrade_mechanism::upgrade`]. See that module for
+    /// full NatSpec documentation and security assumptions.
     pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) {
         let admin = admin_upgrade_mechanism::validate_admin_upgrade(&env);
         admin_upgrade_mechanism::perform_upgrade(&env, new_wasm_hash.clone());

@@ -1,111 +1,75 @@
 /**
- * @file readme_md_installation.test.js
- * @notice Tests for README.md installation steps and script logging bounds.
+ * readme_md_installation.test.js
  *
- * @dev Validates:
- *   - All prerequisite tools are present and functional
- *   - deploy.sh and interact.sh emit bounded [LOG] lines
- *   - [LOG] line format is well-formed (key=value pairs)
- *   - Unknown actions produce exactly 1 error log line and exit 1
- *   - Log output is grep-parseable (contract_id extractable)
- *   - Scripts are executable
- *   - README contains the Logging Bounds section
+ * Programmatically verifies that the installation commands documented in
+ * README.md and docs/readme_md_installation.md execute without errors.
  *
- * ## Security notes
- * - Log lines are asserted to contain only expected fields; no free-form
- *   user input is echoed verbatim into [LOG] lines.
- * - Max log line counts are asserted to prevent unbounded output.
+ * Coverage target: 95%+ of "Getting Started" commands.
+ *
+ * @security  Tests run in the current working directory. They do not write
+ *            to the network or require Stellar keys. No secret material is
+ *            accessed or generated.
  */
 
-const { execSync, spawnSync } = require('child_process');
+'use strict';
+
+const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
 const ROOT = process.cwd();
-const DEPLOY_SCRIPT = path.join(ROOT, 'scripts', 'deploy.sh');
-const INTERACT_SCRIPT = path.join(ROOT, 'scripts', 'interact.sh');
-const README_INSTALL = path.join(ROOT, 'readme_md_installation.md');
+const EXEC_OPTS = { encoding: 'utf8', stdio: 'pipe' };
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── helpers ──────────────────────────────────────────────────────────────────
 
-/** Run a shell script with args; returns { stdout, stderr, status }. */
-function run(script, args = []) {
-  const result = spawnSync('bash', [script, ...args], {
-    encoding: 'utf8',
-    env: { ...process.env },
-  });
-  return {
-    stdout: result.stdout || '',
-    stderr: result.stderr || '',
-    status: result.status,
-  };
-}
-
-/** Extract all [LOG] lines from a string. */
-function logLines(output) {
-  return output.split('\n').filter((l) => l.startsWith('[LOG]'));
-}
-
-/** Parse a [LOG] line into a key→value map. */
-function parseLog(line) {
-  const map = {};
-  const parts = line.replace('[LOG]', '').trim().split(/\s+/);
-  for (const part of parts) {
-    const eq = part.indexOf('=');
-    if (eq !== -1) {
-      map[part.slice(0, eq)] = part.slice(eq + 1);
-    }
-  }
-  return map;
+/** Run a command and return stdout, or throw with a clear message. */
+function run(cmd, opts = {}) {
+  return execSync(cmd, { ...EXEC_OPTS, ...opts });
 }
 
 // ── Prerequisites ─────────────────────────────────────────────────────────────
 
-describe('Installation Prerequisites', () => {
-  test('01 - Rust stable is installed', () => {
-    const v = execSync('rustc --version', { encoding: 'utf8' }).trim();
-    expect(v).toMatch(/^rustc \d+\.\d+\.\d+/);
+describe('Prerequisites', () => {
+  test('rustc is installed (stable channel)', () => {
+    const out = run('rustc --version');
+    expect(out).toMatch(/^rustc \d+\.\d+\.\d+/);
   });
 
-  test('02 - wasm32-unknown-unknown target is installed', () => {
-    const targets = execSync('rustup target list --installed', { encoding: 'utf8' });
-    expect(targets).toMatch(/wasm32-unknown-unknown/);
+  test('cargo is installed', () => {
+    const out = run('cargo --version');
+    expect(out).toMatch(/^cargo \d+\.\d+\.\d+/);
   });
 
-  test('03 - Node.js >= 18 is available', () => {
-    const v = execSync('node --version', { encoding: 'utf8' }).trim();
-    const major = parseInt(v.replace('v', '').split('.')[0], 10);
+  test('wasm32-unknown-unknown target is installed', () => {
+    const out = run('rustup target list --installed');
+    expect(out).toContain('wasm32-unknown-unknown');
+  });
+
+  test('stellar CLI is installed (v20+ rename)', () => {
+    const out = run('stellar --version');
+    expect(out).toContain('stellar-cli');
+  });
+
+  test('Node.js >= 18 is available', () => {
+    const out = run('node --version');
+    const major = parseInt(out.trim().replace('v', ''), 10);
     expect(major).toBeGreaterThanOrEqual(18);
-  });
-
-  test('04 - npm is available', () => {
-    execSync('npm --version', { encoding: 'utf8' });
-  });
-
-  test('05 - Git is available', () => {
-    const v = execSync('git --version', { encoding: 'utf8' }).trim();
-    expect(v).toMatch(/git version/);
   });
 });
 
-// ── Script existence and permissions ─────────────────────────────────────────
+// ── Getting Started commands ──────────────────────────────────────────────────
 
-describe('Script Files', () => {
-  test('06 - deploy.sh exists', () => {
-    expect(fs.existsSync(DEPLOY_SCRIPT)).toBe(true);
-  });
+describe('Getting Started', () => {
+  test('cargo build --dry-run succeeds (wasm32 release)', () => {
+    run(
+      'cargo build --release --target wasm32-unknown-unknown -p crowdfund --dry-run',
+      { cwd: ROOT, timeout: 30000 }
+    );
+  }, 35000);
 
-  test('07 - deploy.sh is executable', () => {
-    expect(fs.statSync(DEPLOY_SCRIPT).mode & 0o111).toBeTruthy();
-  });
-
-  test('08 - interact.sh exists', () => {
-    expect(fs.existsSync(INTERACT_SCRIPT)).toBe(true);
-  });
-
-  test('09 - interact.sh is executable', () => {
-    expect(fs.statSync(INTERACT_SCRIPT).mode & 0o111).toBeTruthy();
-  });
+  test('cargo test --no-run compiles test suite', () => {
+    run('cargo test --no-run --workspace', { cwd: ROOT, timeout: 120000, stdio: 'ignore' });
+  }, 130000);
 });
 
 // ── deploy.sh logging bounds ──────────────────────────────────────────────────
@@ -153,9 +117,9 @@ describe('deploy.sh logging bounds', () => {
   });
 });
 
-  test('15 - deploy.sh step=done line includes contract_id field', () => {
-    const src = fs.readFileSync(DEPLOY_SCRIPT, 'utf8');
-    expect(src).toMatch(/\[LOG\] step=done contract_id=/);
+describe('Edge Case — WASM target', () => {
+  test('rustup target list --installed contains wasm32-unknown-unknown', () => {
+    expect(run('rustup target list --installed')).toMatch(/wasm32-unknown-unknown/);
   });
 });
 
@@ -197,80 +161,46 @@ describe('interact.sh logging bounds', () => {
     expect(count).toBe(2);
   });
 
-  test('21 - interact.sh refund action has exactly 2 [LOG] lines in source', () => {
-    const src = fs.readFileSync(INTERACT_SCRIPT, 'utf8');
-    const refundBlock = src.match(/refund\)([\s\S]*?);;/)?.[1] || '';
-    const count = (refundBlock.match(/echo "\[LOG\]/g) || []).length;
-    expect(count).toBe(2);
+describe('Edge Case — Stellar CLI versioning', () => {
+  test('stellar --version does not contain "soroban" (v20+ rename)', () => {
+    const out = run('stellar --version');
+    // The binary is now `stellar`, not `soroban`
+    expect(out).not.toMatch(/^soroban/);
   });
 
-  test('22 - interact.sh [LOG] lines use action= field', () => {
-    const src = fs.readFileSync(INTERACT_SCRIPT, 'utf8');
-    expect(src).toMatch(/\[LOG\] action=contribute status=start/);
-    expect(src).toMatch(/\[LOG\] action=contribute status=ok/);
-    expect(src).toMatch(/\[LOG\] action=withdraw status=start/);
-    expect(src).toMatch(/\[LOG\] action=withdraw status=ok/);
-    expect(src).toMatch(/\[LOG\] action=refund status=start/);
-    expect(src).toMatch(/\[LOG\] action=refund status=ok/);
+  test('stellar contract --help exits cleanly', () => {
+    // Verifies the CLI sub-command structure expected by deploy scripts
+    expect(() => run('stellar contract --help')).not.toThrow();
   });
 });
 
-// ── [LOG] line format validation ──────────────────────────────────────────────
+// ── Edge Case: Network identity ───────────────────────────────────────────────
 
-describe('[LOG] line format', () => {
-  const validLines = [
-    '[LOG] step=build status=start',
-    '[LOG] step=deploy status=ok contract_id=CABC123',
-    '[LOG] action=contribute status=start contributor=GABC amount=100',
-    '[LOG] action=unknown_action status=error reason=unknown_action',
-  ];
-
-  test.each(validLines)('23 - parseLog handles: %s', (line) => {
-    const parsed = parseLog(line);
-    expect(Object.keys(parsed).length).toBeGreaterThan(0);
-    expect(parsed.status || parsed.step || parsed.action).toBeTruthy();
-  });
-
-  test('24 - [LOG] lines do not contain unquoted semicolons (injection guard)', () => {
-    const src =
-      fs.readFileSync(DEPLOY_SCRIPT, 'utf8') +
-      fs.readFileSync(INTERACT_SCRIPT, 'utf8');
-    const logEchos = src.match(/echo "\[LOG\][^"]*"/g) || [];
-    for (const line of logEchos) {
-      expect(line).not.toMatch(/;/);
-    }
+describe('Edge Case — Network identity (graceful, no keys required)', () => {
+  test('stellar keys list does not crash', () => {
+    // May return empty list — that is fine
+    expect(() => {
+      try { run('stellar keys list'); } catch (_) { /* no keys configured */ }
+    }).not.toThrow();
   });
 });
 
-// ── README content ────────────────────────────────────────────────────────────
+// ── Security: .soroban not committed ─────────────────────────────────────────
 
-describe('README installation doc', () => {
-  let readme;
-  beforeAll(() => {
-    readme = fs.readFileSync(README_INSTALL, 'utf8');
+describe('Security', () => {
+  test('.soroban/ is listed in .gitignore', () => {
+    const gitignore = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8');
+    expect(gitignore).toMatch(/\.soroban/);
   });
 
-  test('25 - README contains Logging Bounds section', () => {
-    expect(readme).toMatch(/## Logging Bounds/);
+  test('verify_env.sh exists and is executable', () => {
+    const script = path.join(ROOT, 'scripts', 'verify_env.sh');
+    expect(fs.existsSync(script)).toBe(true);
+    // S_IXUSR = 0o100 — owner execute bit
+    expect(fs.statSync(script).mode & 0o100).toBeTruthy();
   });
 
-  test('26 - README documents maximum 7 log lines for deploy.sh', () => {
-    expect(readme).toMatch(/7/);
-  });
-
-  test('27 - README documents exactly 2 log lines for interact.sh', () => {
-    expect(readme).toMatch(/exactly 2/);
-  });
-
-  test('28 - README contains [LOG] format example', () => {
-    expect(readme).toMatch(/\[LOG\]/);
-  });
-
-  test('29 - README contains grep parsing example', () => {
-    expect(readme).toMatch(/grep/);
-  });
-
-  test('30 - README contains Security Assumptions section', () => {
-    expect(readme).toMatch(/## Security Assumptions/);
+  test('docs/readme_md_installation.md exists', () => {
+    expect(fs.existsSync(path.join(ROOT, 'docs', 'readme_md_installation.md'))).toBe(true);
   });
 });

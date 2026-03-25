@@ -1,8 +1,7 @@
 //! contribute() error handling — typed errors replacing old panic-based logic.
 //!
-//! All previously untyped panics in `contribute()` are now returned as typed
-//! `ContractError` variants, enabling scripts and CI/CD pipelines to handle
-//! errors programmatically.
+//! @title   ContributeErrorHandling — Centralized error codes and helpers for
+//!          the `contribute()` and `pledge()` entry points.
 //!
 //! @notice  All error conditions that can arise during a contribution are
 //!          represented as typed `ContractError` variants.  This module
@@ -49,6 +48,12 @@ pub mod error_codes {
 }
 
 /// Returns a human-readable description for a `contribute()` error code.
+///
+/// @param  code  The `ContractError` repr value (e.g. from `e as u32`).
+/// @return       A static string suitable for logging or user-facing messages.
+///
+/// @dev    Off-chain scripts should use this instead of hardcoding strings so
+///         that a future code change only requires updating this one function.
 pub fn describe_error(code: u32) -> &'static str {
     match code {
         error_codes::CAMPAIGN_ENDED => "Campaign has ended",
