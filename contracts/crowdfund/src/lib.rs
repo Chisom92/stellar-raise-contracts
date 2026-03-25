@@ -6,6 +6,9 @@ use soroban_sdk::{
     contract, contractclient, contractimpl, contracttype, token, Address, Env, IntoVal, String,
     Symbol, Vec,
 };
+pub mod crowdfund_initialize_function;
+use crowdfund_initialize_function::{execute_initialize, InitParams};
+
 pub mod refund_single_token;
 use refund_single_token::refund_single_transfer;
 
@@ -19,6 +22,8 @@ mod campaign_goal_minimum_test;
 pub mod contribute_error_handling;
 #[cfg(test)]
 mod contribute_error_handling_tests;
+#[cfg(test)]
+mod crowdfund_initialize_function_test;
 #[cfg(test)]
 mod proptest_generator_boundary;
 #[cfg(test)]
@@ -130,6 +135,16 @@ pub enum ContractError {
     Overflow = 6,
     /// Returned by `refund_single` when the caller has no contribution to refund.
     NothingToRefund = 7,
+    /// Returned by `initialize` when `goal < MIN_GOAL_AMOUNT`.
+    InvalidGoal = 8,
+    /// Returned by `initialize` when `min_contribution < MIN_CONTRIBUTION_AMOUNT`.
+    InvalidMinContribution = 9,
+    /// Returned by `initialize` when `deadline` is too soon.
+    DeadlineTooSoon = 10,
+    /// Returned by `initialize` when `platform_config.fee_bps > MAX_PLATFORM_FEE_BPS`.
+    InvalidPlatformFee = 11,
+    /// Returned by `initialize` when `bonus_goal <= goal`.
+    InvalidBonusGoal = 12,
 }
 
 #[contractclient(name = "NftContractClient")]
@@ -144,18 +159,27 @@ pub struct CrowdfundContract;
 impl CrowdfundContract {
     /// Initializes a new crowdfunding campaign.
     ///
-    /// # Arguments
-    /// * `creator`            – The campaign creator's address.
-    /// * `token`              – The token contract address used for contributions.
-    /// * `goal`               – The funding goal (in the token's smallest unit).
-    /// * `deadline`           – The campaign deadline as a ledger timestamp.
-    /// * `min_contribution`   – The minimum contribution amount.
-    /// * `platform_config`    – Optional platform configuration (address and fee in basis points).
+    /// Delegates all validation and storage logic to
+    /// [`crowdfund_initialize_function::execute_initialize`].
     ///
-    /// # Panics
-    /// * If already initialized.
-    /// * If platform fee exceeds 10,000 (100%).
-    /// * If bonus goal is not greater than the primary goal.
+    /// # Arguments
+    /// * `admin`                  – Address authorized to upgrade the contract.
+    /// * `creator`                – The campaign creator's address (must authorize).
+    /// * `token`                  – The SEP-41 token contract address.
+    /// * `goal`                   – Funding goal in the token's smallest unit (>= 1).
+    /// * `deadline`               – Campaign deadline as a Unix timestamp (>= now + 60s).
+    /// * `min_contribution`       – Minimum contribution amount (>= 1).
+    /// * `platform_config`        – Optional platform fee configuration (fee_bps <= 10_000).
+    /// * `bonus_goal`             – Optional bonus goal threshold (must be > `goal`).
+    /// * `bonus_goal_description` – Optional description for the bonus goal.
+    ///
+    /// # Errors
+    /// * [`ContractError::AlreadyInitialized`]    – Contract was already initialized.
+    /// * [`ContractError::InvalidGoal`]           – `goal < 1`.
+    /// * [`ContractError::InvalidMinContribution`]– `min_contribution < 1`.
+    /// * [`ContractError::DeadlineTooSoon`]       – `deadline < now + 60`.
+    /// * [`ContractError::InvalidPlatformFee`]    – `fee_bps > 10_000`.
+    /// * [`ContractError::InvalidBonusGoal`]      – `bonus_goal <= goal`.
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -168,63 +192,20 @@ impl CrowdfundContract {
         bonus_goal: Option<i128>,
         bonus_goal_description: Option<String>,
     ) -> Result<(), ContractError> {
-        if env.storage().instance().has(&DataKey::Creator) {
-            return Err(ContractError::AlreadyInitialized);
-        }
-
-        creator.require_auth();
-
-        // Store admin for upgrade authorization.
-        env.storage().instance().set(&DataKey::Admin, &admin);
-
-        if let Some(ref config) = platform_config {
-            if config.fee_bps > 10_000 {
-                panic!("platform fee cannot exceed 100%");
-            }
-            env.storage()
-                .instance()
-                .set(&DataKey::PlatformConfig, config);
-        }
-
-        if let Some(bg) = bonus_goal {
-            if bg <= goal {
-                panic!("bonus goal must be greater than primary goal");
-            }
-            env.storage().instance().set(&DataKey::BonusGoal, &bg);
-        }
-
-        if let Some(bg_description) = bonus_goal_description {
-            env.storage()
-                .instance()
-                .set(&DataKey::BonusGoalDescription, &bg_description);
-        }
-
-        env.storage().instance().set(&DataKey::Creator, &creator);
-        env.storage().instance().set(&DataKey::Token, &token);
-        env.storage().instance().set(&DataKey::Goal, &goal);
-        env.storage().instance().set(&DataKey::Deadline, &deadline);
-        env.storage()
-            .instance()
-            .set(&DataKey::MinContribution, &min_contribution);
-        env.storage().instance().set(&DataKey::TotalRaised, &0i128);
-        env.storage()
-            .instance()
-            .set(&DataKey::BonusGoalReachedEmitted, &false);
-        env.storage()
-            .instance()
-            .set(&DataKey::Status, &Status::Active);
-
-        let empty_contributors: Vec<Address> = Vec::new(&env);
-        env.storage()
-            .persistent()
-            .set(&DataKey::Contributors, &empty_contributors);
-
-        let empty_roadmap: Vec<RoadmapItem> = Vec::new(&env);
-        env.storage()
-            .instance()
-            .set(&DataKey::Roadmap, &empty_roadmap);
-
-        Ok(())
+        execute_initialize(
+            &env,
+            InitParams {
+                admin,
+                creator,
+                token,
+                goal,
+                deadline,
+                min_contribution,
+                platform_config,
+                bonus_goal,
+                bonus_goal_description,
+            },
+        )
     }
 
     /// Returns the list of all contributor addresses.

@@ -174,9 +174,8 @@ fn test_initialize_with_bonus_goal() {
     assert_eq!(client.bonus_goal_progress_bps(), 0);
 }
 
-/// Platform fee exceeding 100% must panic.
+/// Platform fee exceeding 100% must return InvalidPlatformFee.
 #[test]
-#[should_panic(expected = "platform fee cannot exceed 100%")]
 fn test_initialize_platform_fee_over_100_panics() {
     let (env, client, creator, token_address, admin) = setup_env();
     let deadline = env.ledger().timestamp() + 3600;
@@ -184,7 +183,7 @@ fn test_initialize_platform_fee_over_100_panics() {
         address: admin.clone(),
         fee_bps: 10_001,
     };
-    client.initialize(
+    let result = client.try_initialize(
         &admin,
         &creator,
         &token_address,
@@ -195,15 +194,18 @@ fn test_initialize_platform_fee_over_100_panics() {
         &None,
         &None,
     );
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        crate::ContractError::InvalidPlatformFee
+    );
 }
 
-/// Bonus goal not greater than primary goal must panic.
+/// Bonus goal not greater than primary goal must return InvalidBonusGoal.
 #[test]
-#[should_panic(expected = "bonus goal must be greater than primary goal")]
 fn test_initialize_bonus_goal_not_greater_panics() {
     let (env, client, creator, token_address, admin) = setup_env();
     let deadline = env.ledger().timestamp() + 3600;
-    client.initialize(
+    let result = client.try_initialize(
         &admin,
         &creator,
         &token_address,
@@ -213,6 +215,10 @@ fn test_initialize_bonus_goal_not_greater_panics() {
         &None,
         &Some(500_000i128), // less than goal
         &None,
+    );
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        crate::ContractError::InvalidBonusGoal
     );
 }
 
