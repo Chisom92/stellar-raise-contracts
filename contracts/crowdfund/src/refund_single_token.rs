@@ -21,7 +21,7 @@ use soroban_sdk::{token, Address, Env, Symbol};
 //! 4. **Direction lock** — The token transfer explicitly uses the contract's
 //!    address as the sender and the contributor as the recipient.
 
-#![allow(missing_docs)]
+#[allow(missing_docs)]
 
 use soroban_sdk::{token, Address, Env};
 

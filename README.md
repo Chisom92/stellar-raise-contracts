@@ -35,14 +35,52 @@ stellar-raise-contracts/
 
 ## Prerequisites
 
-- [Rust](https://rustup.rs/) (stable)
-- The `wasm32-unknown-unknown` target:
+| Requirement | Minimum | Notes |
+| :--- | :--- | :--- |
+| OS | Linux x86-64 or macOS 12+ | WSL2 on Windows |
+| RAM | 4 GB | 8 GB recommended for `--release` builds |
+| Rust | stable ≥ 1.74 | `rustup update stable` |
+| Stellar CLI | ≥ 20.0.0 | Renamed from `soroban` in v20 |
+| Node.js | ≥ 18 | Required for frontend UI and JS tests |
 
-  ```bash
-  rustup target add wasm32-unknown-unknown
-  ```
+### Install Rust and WASM target
 
-- [Stellar CLI](https://soroban.stellar.org/docs/getting-started/setup) (optional, for deployment)
+```bash
+# Install Rust via rustup (https://rustup.rs)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+# Add the WASM compilation target
+rustup target add wasm32-unknown-unknown
+
+# Verify
+rustc --version
+rustup target list --installed | grep wasm32
+```
+
+### Install Stellar CLI
+
+```bash
+curl -Ls https://soroban.stellar.org/install-soroban.sh | sh
+source ~/.bashrc   # or ~/.zshrc
+stellar --version  # should print stellar-cli x.y.z
+```
+
+### Install Node.js (frontend UI)
+
+Node.js ≥ 18 is required to run the frontend and its test suite.
+
+```bash
+# Using nvm (recommended)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+source ~/.bashrc
+nvm install 18
+nvm use 18
+node --version   # v18.x.x
+npm --version
+```
+
+> Alternatively, download directly from [nodejs.org](https://nodejs.org/).
 
 ## Getting Started
 
@@ -54,9 +92,21 @@ cd stellar-raise-contracts
 # Build the contract
 cargo build --release --target wasm32-unknown-unknown
 
-# Run tests
+# Run contract tests
 cargo test --workspace
+
+# Install frontend dependencies
+cd frontend
+npm install
+
+# Run frontend tests (single pass, no watch)
+npm test -- --run
+
+# Start the frontend dev server (run manually in your terminal)
+# npm run dev
 ```
+
+> See [`docs/readme_md_installation.md`](docs/readme_md_installation.md) for edge cases, automated environment verification, and frontend-specific troubleshooting.
 
 ## Contract Interface
 
@@ -330,6 +380,31 @@ running all tests in parallel can exhaust memory.
 ```bash
 # Limit test thread parallelism
 cargo test --workspace -- --test-threads=2
+```
+
+### Node.js version mismatch (frontend)
+
+```bash
+# Symptom: SyntaxError or "engine" warning during npm install
+node --version   # must be >= 18
+nvm install 18 && nvm use 18
+npm install
+```
+
+### npm install fails with peer dependency errors
+
+```bash
+# Use legacy peer deps flag if needed (Node 18+)
+npm install --legacy-peer-deps
+```
+
+### Frontend dev server port conflict
+
+```bash
+# Symptom: EADDRINUSE: address already in use :::3000
+# Kill the process on port 3000 and restart
+lsof -ti:3000 | xargs kill -9
+npm run dev
 ```
 
 For a full edge-case checklist and automated environment verification, see

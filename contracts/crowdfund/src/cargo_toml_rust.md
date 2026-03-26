@@ -177,7 +177,7 @@ CargoTomlRust::initialize(env);
 CargoTomlRust::add_approved_dependency(
     env,
     String::from_str(&env, "soroban-sdk"),
-    String::from_str(&env, "22.0.11"),
+    String::from_str(&env, "22.1.0"),
     2, // security level
     1640995200, // timestamp
     false, // not dev-only

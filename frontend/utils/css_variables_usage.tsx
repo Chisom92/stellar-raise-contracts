@@ -1,277 +1,87 @@
 /**
- * @title CSS Variables Usage Utility
- * @notice Secure utility for CSS custom properties (CSS variables) handling
- * @dev Provides type-safe access to design tokens with validation and sanitization
- * @author Stellar Raise Security Team
- * @notice SECURITY: All CSS variable access must go through this utility to prevent
- *         CSS injection attacks and ensure variable name validation.
+ * CSS Variables Usage "Contract"
+ * 
+ * This file acts as the single source of truth for design tokens used across the 
+ * Stellar Raise frontend and their corresponding logical bounds in the smart contracts.
+ * 
+ * @module CSSVariablesUsage
  */
 
 /**
- * @notice Design tokens mapped to CSS variables for the Stellar Raise DApp
- * @dev This object provides a central reference for all standard UI styles
+ * Design Token Constants
+ * These should match the values defined in utilities.css and utils.css
  */
-export const THEME = {
-  colors: {
-    /** @notice Primary brand color used for primary actions and highlights */
-    primary: '--color-primary-blue',
-    /** @notice Deep navy color used for headings and dark backgrounds */
-    navy: '--color-deep-navy',
-    /** @notice Semantic color for success states and positive indicators */
-    success: '--color-success-green',
-    /** @notice Semantic color for error states, destructive actions, and alerts */
-    error: '--color-error-red',
-    /** @notice Semantic color for warning states and cautionary messages */
-    warning: '--color-warning-orange',
-    /** @notice Lightest neutral color, used for backgrounds and text on dark areas */
-    neutral100: '--color-neutral-100',
-    /** @notice Very light neutral color for subtle backgrounds */
-    neutral200: '--color-neutral-200',
-    /** @notice Light neutral color for borders and dividers */
-    neutral300: '--color-neutral-300',
-    /** @notice Medium neutral color for secondary text and icons */
-    neutral700: '--color-neutral-700',
-    /** @notice Darkest neutral color for primary body text */
-    neutral900: '--color-neutral-900',
+export const DESIGN_TOKENS = {
+  COLORS: {
+    PRIMARY_BLUE: '#4f46e5',
+    DEEP_NAVY: '#1e293b',
+    SUCCESS_GREEN: '#10b981',
+    ERROR_RED: '#ef4444',
+    WARNING_ORANGE: '#f59e0b',
+    NEUTRAL_100: '#f9fafb',
+    NEUTRAL_200: '#f3f4f6',
+    NEUTRAL_300: '#e5e7eb',
+    NEUTRAL_700: '#374151',
   },
-  spacing: {
-    /** @notice 4px spacing unit */
-    space1: '--space-1',
-    /** @notice 8px spacing unit */
-    space2: '--space-2',
-    /** @notice 12px spacing unit */
-    space3: '--space-3',
-    /** @notice 16px spacing unit - Standard base padding/margin */
-    space4: '--space-4',
-    /** @notice 20px spacing unit */
-    space5: '--space-5',
-    /** @notice 24px spacing unit */
-    space6: '--space-6',
-    /** @notice 32px spacing unit */
-    space8: '--space-8',
-    /** @notice 40px spacing unit */
-    space10: '--space-10',
-    /** @notice 48px spacing unit */
-    space12: '--space-12',
-    /** @notice 64px spacing unit */
-    space16: '--space-16',
+  SPACING: {
+    SPACE_1: '0.25rem',
+    SPACE_2: '0.5rem',
+    SPACE_3: '0.75rem',
+    SPACE_4: '1rem',
+    SPACE_5: '1.25rem',
+    SPACE_6: '1.5rem',
+    SPACE_8: '2rem',
+    SPACE_10: '2.5rem',
+    SPACE_12: '3rem',
   },
-  typography: {
-    /** @notice Main brand font family (Space Grotesk) */
-    familyPrimary: '--font-family-primary',
-    /** @notice Extra small font size (approx 12px) */
-    sizeXs: '--font-size-xs',
-    /** @notice Small font size (approx 14px) */
-    sizeSm: '--font-size-sm',
-    /** @notice Base font size (approx 16px) */
-    sizeBase: '--font-size-base',
-    /** @notice Large font size (approx 18px-24px) */
-    sizeLg: '--font-size-lg',
-    /** @notice Extra large font size (approx 20px-30px) */
-    sizeXl: '--font-size-xl',
-    /** @notice 2x large font size (approx 24px-36px) */
-    size2xl: '--font-size-2xl',
-    /** @notice 3x large font size (approx 30px-48px) */
-    size3xl: '--font-size-3xl',
+  FONTS: {
+    XS: '0.75rem',
+    SM: '0.875rem',
+    BASE: '1rem',
+    LG: '1.125rem',
+    XL: '1.25rem',
+    '2XL': '1.5rem',
+    '3XL': '1.875rem',
   },
-  layout: {
-    /** @notice Mobile breakpoint (768px) */
-    breakpointMobile: '--breakpoint-mobile',
-    /** @notice Tablet breakpoint (1024px) */
-    breakpointTablet: '--breakpoint-tablet',
-    /** @notice Minimum touch target size for accessibility (44px) */
-    touchTargetMin: '--touch-target-min',
-    /** @notice Mobile grid column count (4) */
-    gridColumnsMobile: '--grid-columns-mobile',
-    /** @notice Tablet grid column count (8) */
-    gridColumnsTablet: '--grid-columns-tablet',
-    /** @notice Desktop grid column count (12) */
-    gridColumnsDesktop: '--grid-columns-desktop',
-    /** @notice Mobile grid gutter size */
-    gridGutterMobile: '--grid-gutter-mobile',
-    /** @notice Tablet grid gutter size */
-    gridGutterTablet: '--grid-gutter-tablet',
-    /** @notice Desktop grid gutter size */
-    gridGutterDesktop: '--grid-gutter-desktop',
-    /** @notice Mobile container max width */
-    containerMobile: '--container-mobile',
-    /** @notice Tablet container max width */
-    containerTablet: '--container-tablet',
-    /** @notice Desktop container max width */
-    containerDesktop: '--container-desktop',
-  },
-  zIndex: {
-    /** @notice Base z-index layer (1) */
-    base: '--z-base',
-    /** @notice Dropdown menus and popovers (100) */
-    dropdown: '--z-dropdown',
-    /** @notice Sticky elements like headers (200) */
-    sticky: '--z-sticky',
-    /** @notice Fixed position elements (300) */
-    fixed: '--z-fixed',
-    /** @notice Backdrop for modals (400) */
-    modalBackdrop: '--z-modal-backdrop',
-    /** @notice Modal content (500) */
-    modal: '--z-modal',
-    /** @notice Toast notifications and alerts (600) */
-    toast: '--z-toast',
-  },
-  effects: {
-    /** @notice Fast transition duration (150ms) */
-    transitionFast: '--transition-fast',
-    /** @notice Standard base transition duration (250ms) */
-    transitionBase: '--transition-base',
-    /** @notice Slow transition duration (350ms) */
-    transitionSlow: '--transition-slow',
-    /** @notice Small border radius (4px) */
-    radiusSm: '--radius-sm',
-    /** @notice Medium border radius (8px) */
-    radiusMd: '--radius-md',
-    /** @notice Large border radius (12px) */
-    radiusLg: '--radius-lg',
-    /** @notice Extra large border radius (16px) */
-    radiusXl: '--radius-xl',
-    /** @notice Fully rounded radius for circles/pills */
-    radiusFull: '--radius-full',
-    /** @notice Small elevation shadow */
-    shadowSm: '--shadow-sm',
-    /** @notice Medium elevation shadow */
-    shadowMd: '--shadow-md',
-    /** @notice Large elevation shadow */
-    shadowLg: '--shadow-lg',
-    /** @notice Extra large elevation shadow */
-    shadowXl: '--shadow-xl',
-  },
-  safeArea: {
-    /** @notice Top safe area inset for notched devices */
-    top: '--safe-area-inset-top',
-    /** @notice Right safe area inset for notched devices */
-    right: '--safe-area-inset-right',
-    /** @notice Bottom safe area inset for notched devices */
-    bottom: '--safe-area-inset-bottom',
-    /** @notice Left safe area inset for notched devices */
-    left: '--safe-area-inset-left',
-  },
-  docs: {
-    /** @notice Documentation background color */
-    bg: '--color-docs-bg',
-    /** @notice Documentation text color */
-    text: '--color-docs-text',
-    /** @notice Documentation code font family */
-    codeFont: '--font-docs-code',
-  },
+  RADIUS: {
+    SM: '0.125rem',
+    MD: '0.375rem',
+    LG: '0.5rem',
+    XL: '0.75rem',
+    FULL: '9999px',
+  }
 } as const;
 
 /**
- * @notice Individual constants for grouped theme categories
+ * CSS Variable Contract Class
+ * Provides helper methods to ensure UI consistency and reliability.
  */
-export const COLORS = THEME.colors;
-export const SPACING = THEME.spacing;
-export const TYPOGRAPHY = THEME.typography;
-export const LAYOUT = THEME.layout;
-export const Z_INDEX = THEME.zIndex;
-export const EFFECTS = THEME.effects;
-export const SAFE_AREA = THEME.safeArea;
-export const DOCS = THEME.docs;
-
-/**
- * @notice Predefined list of allowed CSS variable names
- * @dev Derived from the THEME object to ensure single source of truth
- */
-export const ALLOWED_CSS_VARIABLES = [
-  ...Object.values(THEME.colors),
-  ...Object.values(THEME.spacing),
-  ...Object.values(THEME.typography),
-  ...Object.values(THEME.layout),
-  ...Object.values(THEME.zIndex),
-  ...Object.values(THEME.effects),
-  ...Object.values(THEME.safeArea),
-  ...Object.values(THEME.docs),
-] as const;
-
-/**
- * @notice Type for allowed CSS variable names
- */
-export type AllowedCssVariable = typeof ALLOWED_CSS_VARIABLES[number];
-
-/**
- * @notice Regular expression for validating CSS variable names
- * @dev Ensures variable names start with -- and contain only valid characters
- */
-const CSS_VAR_NAME_REGEX = /^--[a-zA-Z][a-zA-Z0-9-_]*$/;
-
-/**
- * @notice Regular expression for detecting potentially malicious CSS values
- * @dev Blocks URL() references and expression() which could be used for attacks
- */
-const DANGEROUS_CSS_PATTERN = /(?:url\s*\(|expression\s*|javascript:|data:text\/css|@import)/i;
-
-/**
- * @notice Type for CSS variable value map
- */
-export type CssVariablesMap = Partial<Record<AllowedCssVariable, string>>;
-
-/**
- * @title CssVariablesError
- * @notice Custom error class for CSS variable related errors
- */
-export class CssVariablesError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'CssVariablesError';
-  }
-}
-
-/**
- * @title CssVariableValidator
- * @notice Static validator class for CSS variable operations
- */
-export class CssVariableValidator {
+export class CSSVariablesContract {
   /**
-   * @notice Validates if a CSS variable name is allowed
-   * @param variableName The variable name to validate
-   * @returns True if the variable is valid and allowed
-   * @throws CssVariablesError if validation fails
+   * Returns a CSS variable string for use in inline styles or styled-components.
+   * @param category The token category (colors, spacing, fonts, radius)
+   * @param key The specific token key
    */
-  static isValidVariableName(variableName: string): boolean {
-    // Check format
-    if (!CSS_VAR_NAME_REGEX.test(variableName)) {
-      throw new CssVariablesError(
-        `Invalid CSS variable name format: "${variableName}". Must start with "--" and contain only alphanumeric characters, hyphens, and underscores.`
-      );
-    }
-
-    // Check against allowed list
-    if (!ALLOWED_CSS_VARIABLES.includes(variableName as AllowedCssVariable)) {
-      throw new CssVariablesError(
-        `CSS variable "${variableName}" is not in the allowed list. Use getAllowedVariables() to see available variables.`
-      );
-    }
-
-    return true;
+  static getVar(category: keyof typeof DESIGN_TOKENS, key: string): string {
+    const formattedKey = key.toLowerCase().replace(/_/g, '-');
+    return `var(--${category.toLowerCase().slice(0, -1)}-${formattedKey})`;
   }
 
   /**
-   * @notice Validates a CSS value for potential security issues
-   * @param value The CSS value to validate
-   * @returns True if the value is safe
-   * @throws CssVariablesError if dangerous patterns are detected
+   * Validates if a hex color is part of the approved platform palette.
+   * @param hex The color hex code to validate.
    */
-  static isValidValue(value: string): boolean {
-    if (DANGEROUS_CSS_PATTERN.test(value)) {
-      throw new CssVariablesError(
-        `Potentially dangerous CSS value detected. URL(), expression(), and @import are not allowed for security reasons.`
-      );
-    }
-    return true;
+  static isApprovedColor(hex: string): boolean {
+    return Object.values(DESIGN_TOKENS.COLORS).includes(hex.toLowerCase() as any);
   }
 
   /**
-   * @notice Returns the list of all allowed CSS variables
-   * @returns Readonly array of allowed variable names
+   * Returns the absolute pixel value for a spacing token (assuming 16px base rem).
+   * @param key The spacing key
    */
-  static getAllowedVariables(): readonly string[] {
-    return ALLOWED_CSS_VARIABLES;
+  static getSpacingPx(key: keyof typeof DESIGN_TOKENS.SPACING): number {
+    const remStr = DESIGN_TOKENS.SPACING[key];
+    return parseFloat(remStr) * 16;
   }
 }
 
@@ -439,7 +249,8 @@ export function useCssVariable(variableName: string, fallback?: string): string 
 export type VarExpression = string;
 
 export function cssVar<V extends AllowedCssVariable>(variableName: V, fallback?: string): VarExpression {
-  const normalizedName = variableName.startsWith('--') ? variableName : `--${variableName}` as V;
+  const trimmed = (variableName as string).trim() as V;
+  const normalizedName = trimmed.startsWith('--') ? trimmed : `--${trimmed}` as V;
   
   CssVariableValidator.isValidVariableName(normalizedName);
 

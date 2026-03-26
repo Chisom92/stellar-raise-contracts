@@ -1,35 +1,28 @@
 #![no_std]
-#![allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 
 use soroban_sdk::{
     contract, contractclient, contractimpl, contracttype, token, Address, Env, String,
     Symbol, Vec,
 };
 
-pub mod crowdfund_initialize_function;
+// ── Modules ──────────────────────────────────────────────────────────────────
 
+pub mod admin_upgrade_mechanism;
+pub mod campaign_goal_minimum;
 pub mod cargo_toml_rust;
-#[cfg(test)]
-#[path = "cargo_toml_rust.test.rs"]
-mod cargo_toml_rust_test;
-
-pub mod withdraw_event_emission;
-#[cfg(test)]
-mod withdraw_event_emission_test;
-
 pub mod contract_state_size;
-#[cfg(test)]
-#[path = "contract_state_size.test.rs"]
-mod contract_state_size_test;
-
-
+pub mod contribute_error_handling;
+pub mod crowdfund_initialize_function;
+pub mod proptest_generator_boundary;
 pub mod refund_single_token;
 pub mod soroban_sdk_minor;
-pub mod campaign_goal_minimum;
-pub mod contribute_error_handling;
-pub mod proptest_generator_boundary;
+pub mod stellar_token_minter;
+pub mod withdraw_event_emission;
 
-// --- Imports from Modules ---
+// ── Imports from modules ──────────────────────────────────────────────────────
+
+use crowdfund_initialize_function::{execute_initialize, InitParams};
 use refund_single_token::{
     execute_refund_single, refund_single_transfer, validate_refund_preconditions,
 };
@@ -38,49 +31,53 @@ use refund_single_token::{
 mod refund_single_token_test;
 
 pub mod admin_upgrade_mechanism;
+pub mod access_control;
+#[cfg(test)]
+mod access_control_tests;
 pub mod soroban_sdk_minor;
 #[cfg(test)]
 mod soroban_sdk_minor_test;
 
 pub mod withdraw_event_emission;
-use withdraw_event_emission::{emit_withdrawal_event, mint_nfts_in_batch};
+use withdraw_event_emission::{emit_fee_transferred, emit_withdrawn, mint_nfts_in_batch};
 #[cfg(test)]
 mod withdraw_event_emission_test;
 
+#[cfg(test)]
 #[path = "stellar_token_minter_test.rs"]
-mod stellar_token_minter_test;
+mod stellar_token_minter_test_original;
 
-// --- Tests ---
 #[cfg(test)]
 mod test;
 #[cfg(test)]
 mod auth_tests;
 #[cfg(test)]
+#[path = "admin_upgrade_mechanism.test.rs"]
+mod admin_upgrade_mechanism_test;
+#[cfg(test)]
 #[path = "campaign_goal_minimum.test.rs"]
 mod campaign_goal_minimum_test;
-pub mod crowdfund_initialize_function;
 #[cfg(test)]
-#[path = "crowdfund_initialize_function.test.rs"]
-mod crowdfund_initialize_function_test;
-pub mod contribute_error_handling;
+#[path = "cargo_toml_rust.test.rs"]
+mod cargo_toml_rust_test;
+#[cfg(test)]
+#[path = "contract_state_size.test.rs"]
+mod contract_state_size_test;
 #[cfg(test)]
 mod contribute_error_handling_tests;
 #[cfg(test)]
 
-mod crowdfund_initialize_function_test;
 #[cfg(test)]
-mod proptest_generator_boundary;
+pub mod proptest_generator_boundary;
 #[cfg(test)]
-
 #[path = "proptest_generator_boundary.test.rs"]
-
-mod proptest_generator_boundary_tests;
+mod proptest_generator_boundary_test;
 pub mod stellar_token_minter;
 #[cfg(test)]
-mod stellar_token_minter_test;
+#[path = "stellar_token_minter.test.rs"]
+mod stellar_token_minter_test_comprehensive;
 #[cfg(test)]
-#[path = "admin_upgrade_mechanism.test.rs"]
-mod admin_upgrade_mechanism_test;
+mod withdraw_event_emission_test;
 
 // --- Constants ---
 const CONTRACT_VERSION: u32 = 3;
@@ -176,6 +173,16 @@ pub enum DataKey {
     NFTContract,
     /// Decimal precision of the campaign token (e.g. 7 for XLM, 6 for USDC).
     TokenDecimals,
+
+    // ── Role-separation keys (access_control module) ──────────────────────
+    /// Address with DEFAULT_ADMIN_ROLE — can upgrade, unpause, and transfer roles.
+    DefaultAdmin,
+    /// Address with PAUSER_ROLE — can pause in an emergency but cannot unpause.
+    Pauser,
+    /// Governance address (multisig / DAO) — the only address that may set platform fees.
+    GovernanceAddress,
+    /// Boolean flag — when true, contribute() and withdraw() are blocked.
+    Paused,
 }
 
 // ── Contract Error ──────────────────────────────────────────────────────────
@@ -218,8 +225,8 @@ pub enum ContractError {
     ZeroAmount = 8,
     BelowMinimum = 9,
     CampaignNotActive = 10,
-
-}
+    /// Returned by `contribute` when `amount` is negative.
+    NegativeAmount = 11,
 
 /// Interface for an external NFT contract used to mint contributor rewards.
 #[contractclient(name = "NftContractClient")]
@@ -270,7 +277,6 @@ impl CrowdfundContract {
         bonus_goal_description: Option<String>,
         metadata_uri: Option<String>,
     ) -> Result<(), ContractError> {
-
         execute_initialize(
             &env,
             InitParams {
@@ -284,52 +290,7 @@ impl CrowdfundContract {
                 bonus_goal,
                 bonus_goal_description,
             },
-        );
-
-        if env.storage().instance().has(&DataKey::Creator) {
-            return Err(ContractError::AlreadyInitialized);
-        }
-
-        // Validate that `token` is a real SEP-41 contract by reading its decimals.
-        // This call will trap if the address does not implement the token interface,
-        // preventing campaigns from being initialized with arbitrary/invalid addresses.
-        let token_client = token::Client::new(&env, &token);
-        let token_decimals: u32 = token_client.decimals();
-
-        creator.require_auth();
-        crate::crowdfund_initialize_function::validate_initialize_inputs(
-            goal,
-            min_contribution,
-            &platform_config,
-            bonus_goal,
-            &bonus_goal_description,
-        );
-        crate::crowdfund_initialize_function::persist_initialize_state(
-            &env,
-            &admin,
-            &creator,
-            &token,
-            goal,
-            deadline,
-            min_contribution,
-            &platform_config,
-            bonus_goal,
-            &bonus_goal_description,
-        );
-
-        // Store optional IPFS metadata URI.
-        if let Some(ref uri) = metadata_uri {
-            env.storage().instance().set(&DataKey::MetadataUri, uri);
-        }
-
-        // Emit CampaignCreated event for off-chain indexers.
-        env.events().publish(
-            ("campaign", "campaign_created"),
-            (creator.clone(), token.clone(), goal, deadline, metadata_uri),
-        );
-
-        Ok(())
-
+        )
     }
 
     /// Returns the list of all contributor addresses.
@@ -707,7 +668,7 @@ impl CrowdfundContract {
                 .expect("fee division by zero");
 
             token_client.transfer(&env.current_contract_address(), &config.address, &fee);
-            withdraw_event_emission::emit_fee_transferred(&env, &config.address, fee);
+            withdraw_event_emission::emit_fee_transferred(&env, &config.address, fee, config.fee_bps);
             total.checked_sub(fee).expect("creator payout underflow")
         } else {
             total
@@ -719,14 +680,11 @@ impl CrowdfundContract {
 
         // Bounded NFT minting: process at most MAX_NFT_MINT_BATCH contributors
         // per withdraw() call to cap event emission and gas consumption.
-        let nft_contract: Option<Address> = env
-            .storage()
-            .instance()
-            .get(&DataKey::NFTContract);
+        let nft_contract: Option<Address> = env.storage().instance().get(&DataKey::NFTContract);
         let nft_minted_count = mint_nfts_in_batch(&env, &nft_contract);
 
-        // Single withdrawal event carrying payout, fee info, and mint count.
-        emit_withdrawal_event(&env, &creator, creator_payout, nft_minted_count);
+        // Single withdrawal event carrying payout and mint count.
+        emit_withdrawn(&env, &creator, creator_payout, nft_minted_count);
 
         Ok(())
     }
@@ -736,91 +694,10 @@ impl CrowdfundContract {
     /// Each contributor independently claims their own refund after the campaign
     /// deadline has passed and the goal was not met.
     ///
-    /// # Arguments
-    /// * `contributor` – The address claiming the refund. Must match the caller.
-    ///
     /// # Errors
     /// * [`ContractError::CampaignStillActive`] – Deadline has not yet passed.
     /// * [`ContractError::GoalReached`]         – Goal was met; no refunds available.
     /// * [`ContractError::NothingToRefund`]     – Caller has no contribution on record.
-    ///
-    /// # Security & Optimizations
-    /// * Requires `contributor.require_auth()` — only the contributor can claim.
-    /// * Zeroes the contribution record **before** transfer (checks-effects-interactions).
-    /// * Uses `checked_sub` to prevent underflow on `total_raised`.
-
-    /// * `refund_single_transfer` helper skips amount <= 0 (gas optimization).
-    /// * Debug event emitted before transfer for monitoring.
-
-    pub fn refund_single(env: Env, contributor: Address) -> Result<(), ContractError> {
-        contributor.require_auth();
-
-
-    /// Claim a refund for a single contributor (pull-based).
-    ///
-    /// # Errors
-    /// * [`ContractError::CampaignStillActive`] when deadline has not passed.
-    /// * [`ContractError::GoalReached`] when the funding goal was met.
-    /// * [`ContractError::NothingToRefund`] when the contributor has no balance.
-    pub fn refund_single(env: Env, contributor: Address) -> Result<(), ContractError> {
-        contributor.require_auth();
-
-        // A successful or cancelled campaign cannot be refunded.
-        let status: Status = env.storage().instance().get(&DataKey::Status).unwrap();
-        if status == Status::Successful || status == Status::Cancelled {
-            panic!("campaign is not active");
-        }
-
-        let deadline: u64 = env.storage().instance().get(&DataKey::Deadline).unwrap();
-        if env.ledger().timestamp() <= deadline {
-            return Err(ContractError::CampaignStillActive);
-        }
-
-        let goal: i128 = env.storage().instance().get(&DataKey::Goal).unwrap();
-        let total: i128 = env
-            .storage()
-            .instance()
-            .get(&DataKey::TotalRaised)
-            .unwrap_or(0);
-
-        if total >= goal {
-            return Err(ContractError::GoalReached);
-        }
-
-        let contribution_key = DataKey::Contribution(contributor.clone());
-        let amount: i128 = env
-            .storage()
-            .persistent()
-            .get(&contribution_key)
-            .unwrap_or(0);
-        if amount == 0 {
-            return Err(ContractError::NothingToRefund);
-        }
-
-        // ── Checks-Effects-Interactions ──────────────────────────────────────
-        refund_single_transfer(
-            &token_client,
-            &env.current_contract_address(),
-            &contributor,
-            amount,
-        );
-
-        env.storage().persistent().set(&contribution_key, &0i128);
-        env.storage()
-            .persistent()
-            .extend_ttl(&contribution_key, 100, 100);
-
-        let new_total = total.checked_sub(amount).ok_or(ContractError::Overflow)?;
-        env.storage()
-            .instance()
-            .set(&DataKey::TotalRaised, &new_total);
-
-        env.events()
-            .publish(("campaign", "refund_single"), (contributor.clone(), amount));
-
-        Ok(())
-    }
-
     pub fn refund_single(env: Env, contributor: Address) -> Result<(), ContractError> {
         contributor.require_auth();
         let amount = validate_refund_preconditions(&env, &contributor)?;
@@ -889,10 +766,23 @@ impl CrowdfundContract {
 
     /// Upgrade the contract to a new WASM implementation — admin-only.
     ///
-    /// Delegates to [`admin_upgrade_mechanism::upgrade`]. See that module for
-    /// full NatSpec documentation and security assumptions.
+    /// Validation order (cheapest checks first for gas efficiency):
+    /// 1. Reject zero hash — pure, no storage reads.
+    /// 2. Load admin + enforce `require_auth()`.
+    /// 3. Execute WASM swap.
+    /// 4. Emit audit event.
+    ///
+    /// # Panics
+    /// * `"zero wasm hash"` — if `new_wasm_hash` is all-zero bytes.
+    /// * `"Admin not initialized"` — if `initialize()` was never called.
+    /// * Auth error — if the caller is not the stored admin.
     pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) {
+        // Gas-efficiency edge case: reject zero hash before any storage read.
+        if !admin_upgrade_mechanism::validate_wasm_hash(&new_wasm_hash) {
+            panic!("zero wasm hash");
+        }
         let admin = admin_upgrade_mechanism::validate_admin_upgrade(&env);
+        admin_upgrade_mechanism::validate_wasm_hash(&new_wasm_hash);
         admin_upgrade_mechanism::perform_upgrade(&env, new_wasm_hash.clone());
 
         env.events().publish(

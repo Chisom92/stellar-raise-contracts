@@ -45,6 +45,11 @@ use crate::{
     stellar_token_minter::{
         emit_batch_summary, remaining_event_budget, remaining_mint_budget, within_event_budget,
         within_log_budget, within_mint_batch, MAX_EVENTS_PER_TX, MAX_LOG_ENTRIES, MAX_MINT_BATCH,
+        TEST_BONUS_CONTRIBUTION, TEST_BONUS_GOAL, TEST_BONUS_PRIMARY_GOAL,
+        TEST_CONTRIBUTOR_BALANCE, TEST_CREATOR_BALANCE, TEST_DEADLINE_OFFSET, TEST_GOAL,
+        TEST_MIN_CONTRIBUTION, TEST_NFT_CONTRIBUTION, TEST_NFT_SMALL_CONTRIBUTION,
+        TEST_OVERFLOW_SEED, TEST_PARTIAL_CONTRIBUTION_A, TEST_PARTIAL_CONTRIBUTION_B,
+        TEST_PLEDGE_CONTRIBUTION,
     },
     ContractError, CrowdfundContract, CrowdfundContractClient,
 };
@@ -103,7 +108,7 @@ fn setup() -> (
     let token_addr = token_id.address();
 
     let creator = Address::generate(&env);
-    token::StellarAssetClient::new(&env, &token_addr).mint(&creator, &100_000_000);
+    token::StellarAssetClient::new(&env, &token_addr).mint(&creator, &TEST_CREATOR_BALANCE);
 
     (env, client, creator, token_addr, token_admin)
 }
@@ -122,7 +127,10 @@ fn init_campaign(
         token,
         &goal,
         &deadline,
-        &1_000,
+        &TEST_MIN_CONTRIBUTION,
+        &None,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -289,41 +297,39 @@ fn test_emit_batch_summary_emits_when_valid() {
 #[test]
 fn test_withdraw_nft_mint_capped_at_max_batch() {
     let (env, client, creator, token_addr, token_admin) = setup();
-    let deadline = env.ledger().timestamp() + 3_600;
-    init_campaign(&client, &creator, &token_addr, 1_000_000, deadline);
+    let deadline = env.ledger().timestamp() + TEST_DEADLINE_OFFSET;
+    init_campaign(&client, &creator, &token_addr, TEST_GOAL, deadline);
 
     let nft_id = env.register(MockNft, ());
     client.set_nft_contract(&creator, &nft_id);
 
-    let per_contributor = 25_000i128;
     for _ in 0..(MAX_MINT_BATCH + 5) as usize {
         let c = Address::generate(&env);
-        mint(&env, &token_addr, &c, per_contributor);
-        client.contribute(&c, &per_contributor);
+        mint(&env, &token_addr, &c, TEST_NFT_CONTRIBUTION);
+        client.contribute(&c, &TEST_NFT_CONTRIBUTION);
     }
 
     env.ledger().set_timestamp(deadline + 1);
     client.withdraw();
 
     assert_eq!(MockNftClient::new(&env, &nft_id).count(), MAX_MINT_BATCH);
-    let _ = token_admin; // consumed by mint helper via mock_all_auths
+    let _ = token_admin;
 }
 
 /// When contributor count is exactly MAX_MINT_BATCH, all are minted.
 #[test]
 fn test_withdraw_nft_mint_exactly_at_batch_limit() {
     let (env, client, creator, token_addr, token_admin) = setup();
-    let deadline = env.ledger().timestamp() + 3_600;
-    init_campaign(&client, &creator, &token_addr, 1_000_000, deadline);
+    let deadline = env.ledger().timestamp() + TEST_DEADLINE_OFFSET;
+    init_campaign(&client, &creator, &token_addr, TEST_GOAL, deadline);
 
     let nft_id = env.register(MockNft, ());
     client.set_nft_contract(&creator, &nft_id);
 
-    let per_contributor = 25_000i128;
     for _ in 0..MAX_MINT_BATCH as usize {
         let c = Address::generate(&env);
-        mint(&env, &token_addr, &c, per_contributor);
-        client.contribute(&c, &per_contributor);
+        mint(&env, &token_addr, &c, TEST_NFT_CONTRIBUTION);
+        client.contribute(&c, &TEST_NFT_CONTRIBUTION);
     }
 
     env.ledger().set_timestamp(deadline + 1);
@@ -337,18 +343,17 @@ fn test_withdraw_nft_mint_exactly_at_batch_limit() {
 #[test]
 fn test_withdraw_nft_mint_below_batch_limit() {
     let (env, client, creator, token_addr, token_admin) = setup();
-    let deadline = env.ledger().timestamp() + 3_600;
-    init_campaign(&client, &creator, &token_addr, 1_000_000, deadline);
+    let deadline = env.ledger().timestamp() + TEST_DEADLINE_OFFSET;
+    init_campaign(&client, &creator, &token_addr, TEST_GOAL, deadline);
 
     let nft_id = env.register(MockNft, ());
     client.set_nft_contract(&creator, &nft_id);
 
     let count = 3u32;
-    let per_contributor = 400_000i128;
     for _ in 0..count as usize {
         let c = Address::generate(&env);
-        mint(&env, &token_addr, &c, per_contributor);
-        client.contribute(&c, &per_contributor);
+        mint(&env, &token_addr, &c, TEST_NFT_SMALL_CONTRIBUTION);
+        client.contribute(&c, &TEST_NFT_SMALL_CONTRIBUTION);
     }
 
     env.ledger().set_timestamp(deadline + 1);
@@ -365,17 +370,17 @@ fn test_withdraw_nft_mint_below_batch_limit() {
 #[test]
 fn test_collect_pledges_emits_single_summary_event() {
     let (env, client, creator, token_addr, token_admin) = setup();
-    let deadline = env.ledger().timestamp() + 3_600;
-    init_campaign(&client, &creator, &token_addr, 500_000, deadline);
+    let deadline = env.ledger().timestamp() + TEST_DEADLINE_OFFSET;
+    init_campaign(&client, &creator, &token_addr, TEST_BONUS_PRIMARY_GOAL, deadline);
 
     let c1 = Address::generate(&env);
     let c2 = Address::generate(&env);
-    mint(&env, &token_addr, &c1, 300_000);
-    mint(&env, &token_addr, &c2, 300_000);
-    client.contribute(&c1, &300_000);
-    client.contribute(&c2, &300_000);
+    mint(&env, &token_addr, &c1, TEST_PLEDGE_CONTRIBUTION);
+    mint(&env, &token_addr, &c2, TEST_PLEDGE_CONTRIBUTION);
+    client.contribute(&c1, &TEST_PLEDGE_CONTRIBUTION);
+    client.contribute(&c2, &TEST_PLEDGE_CONTRIBUTION);
 
-    assert_eq!(client.total_raised(), 600_000);
+    assert_eq!(client.total_raised(), TEST_PLEDGE_CONTRIBUTION * 2);
     assert_eq!(client.get_stats().contributor_count, 2);
     let _ = token_admin;
 }
@@ -387,37 +392,36 @@ fn test_collect_pledges_emits_single_summary_event() {
 #[test]
 fn test_bonus_goal_event_emitted_exactly_once() {
     let (env, client, creator, token_addr, token_admin) = setup();
-    let deadline = env.ledger().timestamp() + 3_600;
+    let deadline = env.ledger().timestamp() + TEST_DEADLINE_OFFSET;
 
     client.initialize(
         &creator,
         &creator,
         &token_addr,
-        &500_000,
+        &TEST_BONUS_PRIMARY_GOAL,
         &deadline,
-        &1_000,
+        &TEST_MIN_CONTRIBUTION,
         &None,
-        &Some(1_000_000i128),
+        &Some(TEST_BONUS_GOAL),
+        &None,
+        &None,
+        &None,
         &None,
         &None,
     );
 
     let c = Address::generate(&env);
-    mint(&env, &token_addr, &c, 3_000_000);
+    mint(&env, &token_addr, &c, TEST_BONUS_CONTRIBUTION * 5);
 
-    // First contribution: below bonus goal — not reached yet
-    client.contribute(&c, &600_000);
+    client.contribute(&c, &TEST_BONUS_CONTRIBUTION);
     assert!(!client.bonus_goal_reached());
 
-    // Second contribution: crosses bonus goal
-    client.contribute(&c, &600_000);
+    client.contribute(&c, &TEST_BONUS_CONTRIBUTION);
     assert!(client.bonus_goal_reached());
 
-    // Third contribution: bonus-goal event must NOT fire again
-    client.contribute(&c, &600_000);
+    client.contribute(&c, &TEST_BONUS_CONTRIBUTION);
     assert!(client.bonus_goal_reached());
 
-    // Progress BPS must be capped at 10_000
     assert_eq!(client.bonus_goal_progress_bps(), 10_000);
     let _ = token_admin;
 }
@@ -428,12 +432,12 @@ fn test_bonus_goal_event_emitted_exactly_once() {
 #[test]
 fn test_contribute_overflow_returns_error() {
     let (env, client, creator, token_addr, token_admin) = setup();
-    let deadline = env.ledger().timestamp() + 3_600;
-    init_campaign(&client, &creator, &token_addr, 1_000_000, deadline);
+    let deadline = env.ledger().timestamp() + TEST_DEADLINE_OFFSET;
+    init_campaign(&client, &creator, &token_addr, TEST_GOAL, deadline);
 
     let c1 = Address::generate(&env);
-    mint(&env, &token_addr, &c1, 10_000);
-    client.contribute(&c1, &10_000);
+    mint(&env, &token_addr, &c1, TEST_OVERFLOW_SEED);
+    client.contribute(&c1, &TEST_OVERFLOW_SEED);
 
     // Seed TotalRaised to near i128::MAX so the next contribute overflows.
     env.as_contract(&client.address, || {
@@ -443,8 +447,8 @@ fn test_contribute_overflow_returns_error() {
     });
 
     let c2 = Address::generate(&env);
-    mint(&env, &token_addr, &c2, 10_000);
-    let result = client.try_contribute(&c2, &10_000);
+    mint(&env, &token_addr, &c2, TEST_OVERFLOW_SEED);
+    let result = client.try_contribute(&c2, &TEST_OVERFLOW_SEED);
     assert_eq!(result.unwrap_err().unwrap(), ContractError::Overflow);
     let _ = token_admin;
 }
@@ -455,12 +459,12 @@ fn test_contribute_overflow_returns_error() {
 #[test]
 fn test_contribute_below_minimum_returns_error() {
     let (env, client, creator, token_addr, token_admin) = setup();
-    let deadline = env.ledger().timestamp() + 3_600;
-    init_campaign(&client, &creator, &token_addr, 1_000_000, deadline);
+    let deadline = env.ledger().timestamp() + TEST_DEADLINE_OFFSET;
+    init_campaign(&client, &creator, &token_addr, TEST_GOAL, deadline);
 
     let c = Address::generate(&env);
-    mint(&env, &token_addr, &c, 500);
-    let result = client.try_contribute(&c, &500); // min is 1_000
+    mint(&env, &token_addr, &c, TEST_MIN_CONTRIBUTION / 2);
+    let result = client.try_contribute(&c, &(TEST_MIN_CONTRIBUTION / 2));
     assert_eq!(result.unwrap_err().unwrap(), ContractError::BelowMinimum);
     let _ = token_admin;
 }
@@ -469,14 +473,14 @@ fn test_contribute_below_minimum_returns_error() {
 #[test]
 fn test_contribute_after_deadline_returns_error() {
     let (env, client, creator, token_addr, token_admin) = setup();
-    let deadline = env.ledger().timestamp() + 3_600;
-    init_campaign(&client, &creator, &token_addr, 1_000_000, deadline);
+    let deadline = env.ledger().timestamp() + TEST_DEADLINE_OFFSET;
+    init_campaign(&client, &creator, &token_addr, TEST_GOAL, deadline);
 
     env.ledger().set_timestamp(deadline + 1);
 
     let c = Address::generate(&env);
-    mint(&env, &token_addr, &c, 10_000);
-    let result = client.try_contribute(&c, &10_000);
+    mint(&env, &token_addr, &c, TEST_CONTRIBUTOR_BALANCE);
+    let result = client.try_contribute(&c, &TEST_CONTRIBUTOR_BALANCE);
     assert_eq!(result.unwrap_err().unwrap(), ContractError::CampaignEnded);
     let _ = token_admin;
 }
@@ -485,8 +489,8 @@ fn test_contribute_after_deadline_returns_error() {
 #[test]
 fn test_contribute_zero_amount_returns_error() {
     let (env, client, creator, token_addr, _token_admin) = setup();
-    let deadline = env.ledger().timestamp() + 3_600;
-    init_campaign(&client, &creator, &token_addr, 1_000_000, deadline);
+    let deadline = env.ledger().timestamp() + TEST_DEADLINE_OFFSET;
+    init_campaign(&client, &creator, &token_addr, TEST_GOAL, deadline);
 
     let c = Address::generate(&env);
     let result = client.try_contribute(&c, &0);
@@ -499,12 +503,12 @@ fn test_contribute_zero_amount_returns_error() {
 #[test]
 fn test_collect_pledges_before_deadline_returns_error() {
     let (env, client, creator, token_addr, token_admin) = setup();
-    let deadline = env.ledger().timestamp() + 3_600;
-    init_campaign(&client, &creator, &token_addr, 500_000, deadline);
+    let deadline = env.ledger().timestamp() + TEST_DEADLINE_OFFSET;
+    init_campaign(&client, &creator, &token_addr, TEST_BONUS_PRIMARY_GOAL, deadline);
 
     let p = Address::generate(&env);
-    mint(&env, &token_addr, &p, 300_000);
-    client.pledge(&p, &300_000);
+    mint(&env, &token_addr, &p, TEST_PLEDGE_CONTRIBUTION);
+    client.pledge(&p, &TEST_PLEDGE_CONTRIBUTION);
 
     let result = client.try_collect_pledges();
     assert_eq!(
@@ -518,12 +522,12 @@ fn test_collect_pledges_before_deadline_returns_error() {
 #[test]
 fn test_collect_pledges_goal_not_met_returns_error() {
     let (env, client, creator, token_addr, token_admin) = setup();
-    let deadline = env.ledger().timestamp() + 3_600;
-    init_campaign(&client, &creator, &token_addr, 1_000_000, deadline);
+    let deadline = env.ledger().timestamp() + TEST_DEADLINE_OFFSET;
+    init_campaign(&client, &creator, &token_addr, TEST_GOAL, deadline);
 
     let p = Address::generate(&env);
-    mint(&env, &token_addr, &p, 100_000);
-    client.pledge(&p, &100_000);
+    mint(&env, &token_addr, &p, TEST_PLEDGE_CONTRIBUTION);
+    client.pledge(&p, &TEST_PLEDGE_CONTRIBUTION);
 
     env.ledger().set_timestamp(deadline + 1);
     let result = client.try_collect_pledges();
@@ -537,8 +541,8 @@ fn test_collect_pledges_goal_not_met_returns_error() {
 #[test]
 fn test_get_stats_empty_campaign() {
     let (env, client, creator, token_addr, _token_admin) = setup();
-    let deadline = env.ledger().timestamp() + 3_600;
-    init_campaign(&client, &creator, &token_addr, 1_000_000, deadline);
+    let deadline = env.ledger().timestamp() + TEST_DEADLINE_OFFSET;
+    init_campaign(&client, &creator, &token_addr, TEST_GOAL, deadline);
 
     let stats = client.get_stats();
     assert_eq!(stats.total_raised, 0);
@@ -551,10 +555,14 @@ fn test_get_stats_empty_campaign() {
 #[test]
 fn test_get_stats_after_contributions() {
     let (env, client, creator, token_addr, token_admin) = setup();
-    let deadline = env.ledger().timestamp() + 3_600;
-    init_campaign(&client, &creator, &token_addr, 1_000_000, deadline);
+    let deadline = env.ledger().timestamp() + TEST_DEADLINE_OFFSET;
+    init_campaign(&client, &creator, &token_addr, TEST_GOAL, deadline);
 
-    let amounts = [200_000i128, 300_000i128, 500_000i128];
+    let amounts = [
+        TEST_PARTIAL_CONTRIBUTION_A,
+        TEST_PARTIAL_CONTRIBUTION_B + TEST_PARTIAL_CONTRIBUTION_A,
+        TEST_BONUS_PRIMARY_GOAL,
+    ];
     for &amt in &amounts {
         let c = Address::generate(&env);
         mint(&env, &token_addr, &c, amt);
@@ -562,9 +570,9 @@ fn test_get_stats_after_contributions() {
     }
 
     let stats = client.get_stats();
-    assert_eq!(stats.total_raised, 1_000_000);
+    assert_eq!(stats.total_raised, TEST_GOAL);
     assert_eq!(stats.contributor_count, 3);
-    assert_eq!(stats.average_contribution, 1_000_000 / 3);
-    assert_eq!(stats.largest_contribution, 500_000);
+    assert_eq!(stats.average_contribution, TEST_GOAL / 3);
+    assert_eq!(stats.largest_contribution, TEST_BONUS_PRIMARY_GOAL);
     let _ = token_admin;
 }

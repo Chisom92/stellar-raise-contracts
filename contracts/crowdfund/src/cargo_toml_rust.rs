@@ -13,20 +13,21 @@
 //!
 //! ## Current Dependencies
 //!
-//! | Crate        | Version   | Scope       | Security Level | Status |
-//! |--------------|-----------|-------------|----------------|---------|
-//! | `soroban-sdk`| `22.0.11` | workspace   | 2              | Approved |
-//! | `proptest`   | `1.11.0`  | dev only    | 1              | Approved |
+//! | Crate        | Version  | Scope       | Security Level | Status   |
+//! |--------------|----------|-------------|----------------|----------|
+//! | `soroban-sdk`| `22.1.0` | workspace   | 2              | Approved |
+//! | `proptest`   | `1.5.0`  | dev only    | 1              | Approved |
 //!
 //! ## Security Assumptions
 //!
-//! 1. **Patch-only bump** — All version changes follow semantic versioning
+//! 1. **Minor bump** — `soroban-sdk 22.1.0` is a minor release; storage layout
+//!    and host-function IDs remain backward-compatible within the 22.x series.
 //! 2. **Dev-only dependencies** — Development dependencies never affect WASM binary
 //! 3. **Security validation** — All dependencies must pass security checks
 //! 4. **Compliance enforcement** — CI/CD rules are automatically enforced
 //! 5. **Audit trail** — All changes are tracked and verifiable
 
-#![allow(dead_code, missing_docs)]
+#[allow(dead_code, missing_docs)]
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol, Vec, Map, String};
 
@@ -82,27 +83,27 @@ pub struct ComplianceRule {
 /// @notice Changing this constant without a corresponding Cargo.toml bump is
 ///         a documentation error, not a functional change.
 /// @dev Security level: 2 (medium - core SDK dependency)
-pub const SOROBAN_SDK_VERSION: &str = "22.0.11";
+pub const SOROBAN_SDK_VERSION: &str = "22.1.0";
 
 /// The previous soroban-sdk version, retained for audit trail.
 ///
 /// @deprecated Superseded by [`SOROBAN_SDK_VERSION`].
 /// @notice Security level: 2 (medium - core SDK dependency)
-#[deprecated(since = "22.0.11", note = "Upgrade to soroban-sdk 22.0.11")]
-pub const SOROBAN_SDK_VERSION_DEPRECATED: &str = "22.0.1";
+#[deprecated(since = "22.1.0", note = "Upgrade to soroban-sdk 22.1.0")]
+pub const SOROBAN_SDK_VERSION_DEPRECATED: &str = "22.0.11";
 
 /// The proptest version used in dev-dependencies.
 ///
 /// @dev Not compiled into the WASM binary.
 /// @notice Security level: 1 (low - dev-only dependency)
-pub const PROPTEST_VERSION: &str = "1.11.0";
+pub const PROPTEST_VERSION: &str = "1.5.0";
 
 /// The previous proptest version, retained for audit trail.
 ///
 /// @deprecated Superseded by [`PROPTEST_VERSION`].
 /// @dev Not compiled into the WASM binary.
 /// @notice Security level: 1 (low - dev-only dependency)
-#[deprecated(since = "1.11.0", note = "Upgrade to proptest 1.11.0")]
+#[deprecated(since = "1.5.0", note = "Upgrade to proptest 1.5.0")]
 pub const PROPTEST_VERSION_DEPRECATED: &str = "1.4";
 
 // ── Legacy Dependency Record (for backward compatibility) ───────────────────────

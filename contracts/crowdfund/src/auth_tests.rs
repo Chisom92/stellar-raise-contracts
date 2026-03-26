@@ -56,6 +56,9 @@ fn test_initialize_requires_creator_auth() {
         &None,
         &None,
         &None,
+        &None,
+        &None,
+        &None,
     );
 
     assert_eq!(client.goal(), 1_000_000);
@@ -78,6 +81,9 @@ fn test_withdraw_only_creator_can_withdraw() {
         &goal,
         &deadline,
         &1_000,
+        &None,
+        &None,
+        &None,
         &None,
         &None,
         &None,
@@ -112,6 +118,9 @@ fn test_contribute_requires_own_auth() {
         &1_000_000,
         &deadline,
         &1_000,
+        &None,
+        &None,
+        &None,
         &None,
         &None,
         &None,
