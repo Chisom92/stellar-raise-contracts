@@ -1,522 +1,398 @@
-//! Comprehensive test suite for npm_package_lock module.
+//! Comprehensive test suite for the `npm_package_lock` module.
 //!
-//! Coverage: 42 test cases covering all public functions with edge cases.
-//! Target: ≥95% code coverage.
+//! ## Coverage targets (≥95%)
+//! - `parse_semver`              — valid, edge-case, and invalid inputs
+//! - `is_version_gte`            — boundary comparisons
+//! - `validate_integrity`        — sha512 presence and format
+//! - `audit_package`             — pass/fail scenarios per advisory
+//! - `audit_all`                 — batch audit correctness
+//! - `audit_all_bounded`         — bounds enforcement and error messages
+//! - `failing_results`           — filter helper
+//! - `validate_lockfile_version` — supported/unsupported versions
+//!
+//! ## Security notes
+//! - Tests explicitly cover GHSA-xpqw-6gx7-v673 (svgo Billion Laughs DoS).
+//! - Boundary tests ensure off-by-one errors in version comparisons are caught.
+//! - Integrity tests guard against tampered or incomplete lockfile entries.
 
 #[cfg(test)]
 mod tests {
-    use crate::npm_package_lock::*;
-    use soroban_sdk::{Env, Map, String, Vec};
+    use std::collections::HashMap;
+
+    use crate::npm_package_lock::{
+        audit_all, audit_all_bounded, audit_package, failing_results, is_version_gte,
+        parse_semver, validate_integrity, validate_lockfile_version, AuditResult, PackageEntry,
+        MAX_PACKAGES,
+    };
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    fn create_entry(name: &str, version: &str, integrity: &str, dev: bool) -> PackageEntry {
-        let env = Env::default();
+    /// Build the standard advisory map used across most tests.
+    /// Contains the GHSA-xpqw-6gx7-v673 entry: svgo < 3.3.3 is vulnerable.
+    fn safe_versions() -> HashMap<String, String> {
+        let mut m = HashMap::new();
+        m.insert("svgo".to_string(), "3.3.3".to_string());
+        m
+    }
+
+    fn make_entry(name: &str, version: &str, integrity: &str, dev: bool) -> PackageEntry {
         PackageEntry {
-            name: String::from_slice(&env, name),
-            version: String::from_slice(&env, version),
-            integrity: String::from_slice(&env, integrity),
+            name: name.to_string(),
+            version: version.to_string(),
+            integrity: integrity.to_string(),
             dev,
         }
     }
 
-    fn create_advisory_map(entries: Vec<(&str, &str)>) -> Map<String, String> {
-        let env = Env::default();
-        let mut map = Map::new(&env);
-        for (pkg, min_version) in entries {
-            map.set(
-                String::from_slice(&env, pkg),
-                String::from_slice(&env, min_version),
-            );
-        }
-        map
-    }
+    /// A realistic sha512 integrity hash used as the "valid" value in tests.
+    const VALID_HASH: &str =
+        "sha512-OoohrmuUlBs8B8o6MB2Aevn+pRIH9zDALSR+6hhqVfa6fRwG/Qw9VUMSMW9VNg2CFc/MTIfabtdOVl9ODIJjpw==";
 
-    // ── parse_semver Tests ───────────────────────────────────────────────────
+    // ── parse_semver ─────────────────────────────────────────────────────────
 
     #[test]
     fn test_parse_semver_standard() {
-        let env = Env::default();
-        let version = String::from_slice(&env, "3.3.3");
-        let (major, minor, patch) = parse_semver(&version);
-        assert_eq!(major, 3);
-        assert_eq!(minor, 3);
-        assert_eq!(patch, 3);
+        assert_eq!(parse_semver("3.3.3"), Some((3, 3, 3)));
     }
 
     #[test]
     fn test_parse_semver_with_v_prefix() {
-        let env = Env::default();
-        let version = String::from_slice(&env, "v1.2.0");
-        let (major, minor, patch) = parse_semver(&version);
-        assert_eq!(major, 1);
-        assert_eq!(minor, 2);
-        assert_eq!(patch, 0);
+        assert_eq!(parse_semver("v1.2.3"), Some((1, 2, 3)));
     }
 
     #[test]
     fn test_parse_semver_with_prerelease() {
-        let env = Env::default();
-        let version = String::from_slice(&env, "1.2.0-alpha");
-        let (major, minor, patch) = parse_semver(&version);
-        assert_eq!(major, 1);
-        assert_eq!(minor, 2);
-        assert_eq!(patch, 0);
-    }
-
-    #[test]
-    fn test_parse_semver_with_build_metadata() {
-        let env = Env::default();
-        let version = String::from_slice(&env, "1.2.0+build.123");
-        let (major, minor, patch) = parse_semver(&version);
-        assert_eq!(major, 1);
-        assert_eq!(minor, 2);
-        assert_eq!(patch, 0);
-    }
-
-    #[test]
-    fn test_parse_semver_missing_patch() {
-        let env = Env::default();
-        let version = String::from_slice(&env, "1.2");
-        let (major, minor, patch) = parse_semver(&version);
-        assert_eq!(major, 1);
-        assert_eq!(minor, 2);
-        assert_eq!(patch, 0);
+        // Pre-release suffix is stripped; numeric base is used
+        assert_eq!(parse_semver("3.3.3-beta.1"), Some((3, 3, 3)));
     }
 
     #[test]
     fn test_parse_semver_zeros() {
-        let env = Env::default();
-        let version = String::from_slice(&env, "0.0.0");
-        let (major, minor, patch) = parse_semver(&version);
-        assert_eq!(major, 0);
-        assert_eq!(minor, 0);
-        assert_eq!(patch, 0);
+        assert_eq!(parse_semver("0.0.0"), Some((0, 0, 0)));
     }
 
     #[test]
     fn test_parse_semver_large_numbers() {
-        let env = Env::default();
-        let version = String::from_slice(&env, "999.888.777");
-        let (major, minor, patch) = parse_semver(&version);
-        assert_eq!(major, 999);
-        assert_eq!(minor, 888);
-        assert_eq!(patch, 777);
+        assert_eq!(parse_semver("100.200.300"), Some((100, 200, 300)));
+    }
+
+    #[test]
+    fn test_parse_semver_missing_patch() {
+        // Only two components — not valid semver
+        assert_eq!(parse_semver("3.3"), None);
+    }
+
+    #[test]
+    fn test_parse_semver_empty_string() {
+        assert_eq!(parse_semver(""), None);
     }
 
     #[test]
     fn test_parse_semver_non_numeric() {
-        let env = Env::default();
-        let version = String::from_slice(&env, "abc.def.ghi");
-        let (major, minor, patch) = parse_semver(&version);
-        assert_eq!(major, 0);
-        assert_eq!(minor, 0);
-        assert_eq!(patch, 0);
+        assert_eq!(parse_semver("a.b.c"), None);
     }
 
     #[test]
     fn test_parse_semver_partial_numeric() {
-        let env = Env::default();
-        let version = String::from_slice(&env, "1.2.x");
-        let (major, minor, patch) = parse_semver(&version);
-        assert_eq!(major, 1);
-        assert_eq!(minor, 2);
-        assert_eq!(patch, 0);
+        assert_eq!(parse_semver("1.x.0"), None);
     }
 
-    // ── is_version_gte Tests ─────────────────────────────────────────────────
+    // ── is_version_gte ───────────────────────────────────────────────────────
 
     #[test]
-    fn test_is_version_gte_equal() {
-        let env = Env::default();
-        let v1 = String::from_slice(&env, "3.3.3");
-        let v2 = String::from_slice(&env, "3.3.3");
-        assert!(is_version_gte(&v1, &v2));
+    fn test_version_gte_equal() {
+        assert!(is_version_gte("3.3.3", "3.3.3"));
     }
 
     #[test]
-    fn test_is_version_gte_greater_patch() {
-        let env = Env::default();
-        let v1 = String::from_slice(&env, "3.3.4");
-        let v2 = String::from_slice(&env, "3.3.3");
-        assert!(is_version_gte(&v1, &v2));
+    fn test_version_gte_greater_patch() {
+        assert!(is_version_gte("3.3.4", "3.3.3"));
     }
 
     #[test]
-    fn test_is_version_gte_greater_minor() {
-        let env = Env::default();
-        let v1 = String::from_slice(&env, "3.4.0");
-        let v2 = String::from_slice(&env, "3.3.3");
-        assert!(is_version_gte(&v1, &v2));
+    fn test_version_gte_greater_minor() {
+        assert!(is_version_gte("3.4.0", "3.3.3"));
     }
 
     #[test]
-    fn test_is_version_gte_greater_major() {
-        let env = Env::default();
-        let v1 = String::from_slice(&env, "4.0.0");
-        let v2 = String::from_slice(&env, "3.3.3");
-        assert!(is_version_gte(&v1, &v2));
+    fn test_version_gte_greater_major() {
+        assert!(is_version_gte("4.0.0", "3.3.3"));
     }
 
     #[test]
-    fn test_is_version_gte_less_patch() {
-        let env = Env::default();
-        let v1 = String::from_slice(&env, "3.3.2");
-        let v2 = String::from_slice(&env, "3.3.3");
-        assert!(!is_version_gte(&v1, &v2));
+    fn test_version_gte_less_patch() {
+        // 3.3.2 is the last vulnerable svgo version (GHSA-xpqw-6gx7-v673)
+        assert!(!is_version_gte("3.3.2", "3.3.3"));
     }
 
     #[test]
-    fn test_is_version_gte_less_minor() {
-        let env = Env::default();
-        let v1 = String::from_slice(&env, "3.2.9");
-        let v2 = String::from_slice(&env, "3.3.3");
-        assert!(!is_version_gte(&v1, &v2));
+    fn test_version_gte_less_minor() {
+        assert!(!is_version_gte("3.2.9", "3.3.3"));
     }
 
     #[test]
-    fn test_is_version_gte_less_major() {
-        let env = Env::default();
-        let v1 = String::from_slice(&env, "2.9.9");
-        let v2 = String::from_slice(&env, "3.3.3");
-        assert!(!is_version_gte(&v1, &v2));
+    fn test_version_gte_less_major() {
+        assert!(!is_version_gte("2.9.9", "3.3.3"));
     }
 
     #[test]
-    fn test_is_version_gte_with_prerelease() {
-        let env = Env::default();
-        let v1 = String::from_slice(&env, "3.3.3-beta");
-        let v2 = String::from_slice(&env, "3.3.3");
-        // Pre-release is stripped, so they compare equal
-        assert!(is_version_gte(&v1, &v2));
-    }
-
-    // ── validate_integrity Tests ─────────────────────────────────────────────
-
-    #[test]
-    fn test_validate_integrity_valid_sha512() {
-        let env = Env::default();
-        let integrity = String::from_slice(&env, "sha512-abcdef1234567890");
-        assert!(validate_integrity(&integrity));
+    fn test_version_gte_invalid_version() {
+        // Unparseable version conservatively returns false
+        assert!(!is_version_gte("invalid", "3.3.3"));
     }
 
     #[test]
-    fn test_validate_integrity_empty() {
-        let env = Env::default();
-        let integrity = String::from_slice(&env, "");
-        assert!(!validate_integrity(&integrity));
+    fn test_version_gte_invalid_min() {
+        assert!(!is_version_gte("3.3.3", "invalid"));
+    }
+
+    // ── validate_integrity ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_integrity_valid_sha512() {
+        assert!(validate_integrity(VALID_HASH));
     }
 
     #[test]
-    fn test_validate_integrity_wrong_algorithm_sha256() {
-        let env = Env::default();
-        let integrity = String::from_slice(&env, "sha256-abcdef1234567890");
-        assert!(!validate_integrity(&integrity));
+    fn test_integrity_empty_string() {
+        assert!(!validate_integrity(""));
     }
 
     #[test]
-    fn test_validate_integrity_wrong_algorithm_sha1() {
-        let env = Env::default();
-        let integrity = String::from_slice(&env, "sha1-abcdef1234567890");
-        assert!(!validate_integrity(&integrity));
+    fn test_integrity_wrong_algorithm_sha256() {
+        assert!(!validate_integrity("sha256-abc123"));
     }
 
     #[test]
-    fn test_validate_integrity_prefix_only() {
-        let env = Env::default();
-        let integrity = String::from_slice(&env, "sha512-");
-        assert!(validate_integrity(&integrity));
+    fn test_integrity_wrong_algorithm_sha1() {
+        assert!(!validate_integrity("sha1-abc123"));
     }
 
-    // ── audit_package Tests ──────────────────────────────────────────────────
+    #[test]
+    fn test_integrity_sha512_prefix_only() {
+        // Prefix present but no actual hash — still passes prefix check
+        assert!(validate_integrity("sha512-"));
+    }
 
     #[test]
-    fn test_audit_package_passes() {
-        let env = Env::default();
-        let entry = create_entry("svgo", "3.3.3", "sha512-abc123", false);
-        let advisories = create_advisory_map(vec![("svgo", "3.3.3")]);
+    fn test_integrity_no_prefix() {
+        assert!(!validate_integrity("abc123def456"));
+    }
 
-        let result = audit_package(&entry, &advisories);
+    // ── audit_package — GHSA-xpqw-6gx7-v673 (svgo Billion Laughs DoS) ──────
+
+    #[test]
+    fn test_audit_svgo_vulnerable_version_fails() {
+        // svgo 3.3.2 is in the vulnerable range (>=3.0.0 <3.3.3)
+        let entry = make_entry("svgo", "3.3.2", VALID_HASH, true);
+        let result = audit_package(&entry, &safe_versions());
+        assert!(!result.passed);
+        assert!(result.issues.iter().any(|i| i.contains("3.3.2")));
+        assert!(result.issues.iter().any(|i| i.contains("3.3.3")));
+    }
+
+    #[test]
+    fn test_audit_svgo_patched_version_passes() {
+        // svgo 3.3.3 is the first patched release
+        let entry = make_entry("svgo", "3.3.3", VALID_HASH, true);
+        let result = audit_package(&entry, &safe_versions());
         assert!(result.passed);
-        assert_eq!(result.issues.len(), 0);
+        assert!(result.issues.is_empty());
     }
 
     #[test]
-    fn test_audit_package_fails_version_too_low() {
-        let env = Env::default();
-        let entry = create_entry("svgo", "3.3.2", "sha512-abc123", false);
-        let advisories = create_advisory_map(vec![("svgo", "3.3.3")]);
+    fn test_audit_svgo_newer_version_passes() {
+        let entry = make_entry("svgo", "3.4.0", VALID_HASH, true);
+        let result = audit_package(&entry, &safe_versions());
+        assert!(result.passed);
+    }
 
-        let result = audit_package(&entry, &advisories);
+    #[test]
+    fn test_audit_svgo_oldest_vulnerable_version_fails() {
+        // 3.0.0 is the start of the vulnerable range
+        let entry = make_entry("svgo", "3.0.0", VALID_HASH, true);
+        let result = audit_package(&entry, &safe_versions());
         assert!(!result.passed);
-        assert!(result.issues.len() > 0);
     }
 
     #[test]
-    fn test_audit_package_fails_invalid_integrity() {
-        let env = Env::default();
-        let entry = create_entry("svgo", "3.3.3", "sha256-abc123", false);
-        let advisories = create_advisory_map(vec![("svgo", "3.3.3")]);
-
-        let result = audit_package(&entry, &advisories);
+    fn test_audit_invalid_integrity_fails() {
+        let entry = make_entry("svgo", "3.3.3", "", true);
+        let result = audit_package(&entry, &safe_versions());
         assert!(!result.passed);
-        assert!(result.issues.len() > 0);
+        assert!(result.issues.iter().any(|i| i.contains("integrity")));
     }
 
     #[test]
-    fn test_audit_package_fails_both_checks() {
-        let env = Env::default();
-        let entry = create_entry("svgo", "3.3.2", "sha256-abc123", false);
-        let advisories = create_advisory_map(vec![("svgo", "3.3.3")]);
-
-        let result = audit_package(&entry, &advisories);
+    fn test_audit_both_version_and_integrity_fail() {
+        // Both checks fail — issues list should have exactly 2 entries
+        let entry = make_entry("svgo", "3.3.2", "", true);
+        let result = audit_package(&entry, &safe_versions());
         assert!(!result.passed);
         assert_eq!(result.issues.len(), 2);
     }
 
     #[test]
-    fn test_audit_package_unknown_package() {
-        let env = Env::default();
-        let entry = create_entry("unknown-pkg", "1.0.0", "sha512-abc123", false);
-        let advisories = create_advisory_map(vec![("svgo", "3.3.3")]);
-
-        let result = audit_package(&entry, &advisories);
+    fn test_audit_unknown_package_passes_version_check() {
+        // Package not in the advisory map — no version constraint applied
+        let entry = make_entry("some-unknown-pkg", "1.0.0", VALID_HASH, false);
+        let result = audit_package(&entry, &safe_versions());
         assert!(result.passed);
     }
 
     #[test]
-    fn test_audit_package_version_greater_than_min() {
-        let env = Env::default();
-        let entry = create_entry("svgo", "3.4.0", "sha512-abc123", false);
-        let advisories = create_advisory_map(vec![("svgo", "3.3.3")]);
-
-        let result = audit_package(&entry, &advisories);
-        assert!(result.passed);
+    fn test_audit_result_contains_package_name() {
+        let entry = make_entry("svgo", "3.3.2", VALID_HASH, true);
+        let result = audit_package(&entry, &safe_versions());
+        assert_eq!(result.package_name, "svgo");
     }
 
     #[test]
-    fn test_audit_package_dev_dependency() {
-        let env = Env::default();
-        let entry = create_entry("jest", "30.0.0", "sha512-abc123", true);
-        let advisories = create_advisory_map(vec![("jest", "30.0.0")]);
-
-        let result = audit_package(&entry, &advisories);
-        assert!(result.passed);
+    fn test_audit_dev_dependency_audited_same_as_prod() {
+        // dev flag does not affect audit logic
+        let prod = make_entry("svgo", "3.3.2", VALID_HASH, false);
+        let dev = make_entry("svgo", "3.3.2", VALID_HASH, true);
+        assert_eq!(
+            audit_package(&prod, &safe_versions()).passed,
+            audit_package(&dev, &safe_versions()).passed
+        );
     }
 
-    #[test]
-    fn test_audit_package_boundary_version_3_0_0() {
-        let env = Env::default();
-        let entry = create_entry("svgo", "3.0.0", "sha512-abc123", false);
-        let advisories = create_advisory_map(vec![("svgo", "3.3.3")]);
-
-        let result = audit_package(&entry, &advisories);
-        assert!(!result.passed);
-    }
-
-    // ── audit_all Tests ──────────────────────────────────────────────────────
+    // ── audit_all ────────────────────────────────────────────────────────────
 
     #[test]
     fn test_audit_all_mixed_results() {
-        let env = Env::default();
-        let mut packages = Vec::new(&env);
-        packages.push_back(create_entry("svgo", "3.3.3", "sha512-abc123", true));
-        packages.push_back(create_entry("react", "19.0.0", "sha512-def456", false));
-        packages.push_back(create_entry("jest", "30.0.0", "sha256-ghi789", false));
-
-        let advisories = create_advisory_map(vec![
-            ("svgo", "3.3.3"),
-            ("react", "19.0.0"),
-            ("jest", "30.0.0"),
-        ]);
-
-        let results = audit_all(&packages, &advisories);
+        let packages = vec![
+            make_entry("svgo", "3.3.2", VALID_HASH, true),  // fails
+            make_entry("svgo", "3.3.3", VALID_HASH, true),  // passes
+            make_entry("jest", "30.3.0", VALID_HASH, true), // passes (not in map)
+        ];
+        let results = audit_all(&packages, &safe_versions());
         assert_eq!(results.len(), 3);
-        assert!(results.get(0).unwrap().passed);
-        assert!(results.get(1).unwrap().passed);
-        assert!(!results.get(2).unwrap().passed);
+        assert!(!results[0].passed);
+        assert!(results[1].passed);
+        assert!(results[2].passed);
     }
 
     #[test]
     fn test_audit_all_empty_input() {
-        let env = Env::default();
-        let packages = Vec::new(&env);
-        let advisories = create_advisory_map(vec![]);
-
-        let results = audit_all(&packages, &advisories);
-        assert_eq!(results.len(), 0);
+        let results = audit_all(&[], &safe_versions());
+        assert!(results.is_empty());
     }
 
     #[test]
     fn test_audit_all_all_pass() {
-        let env = Env::default();
-        let mut packages = Vec::new(&env);
-        packages.push_back(create_entry("svgo", "3.3.3", "sha512-abc123", true));
-        packages.push_back(create_entry("react", "19.0.0", "sha512-def456", false));
-
-        let advisories = create_advisory_map(vec![("svgo", "3.3.3"), ("react", "19.0.0")]);
-
-        let results = audit_all(&packages, &advisories);
-        assert_eq!(results.len(), 2);
-        for i in 0..results.len() {
-            assert!(results.get(i).unwrap().passed);
-        }
+        let packages = vec![
+            make_entry("svgo", "3.3.3", VALID_HASH, true),
+            make_entry("jest", "30.3.0", VALID_HASH, true),
+        ];
+        let results = audit_all(&packages, &safe_versions());
+        assert!(results.iter().all(|r| r.passed));
     }
 
-    // ── failing_results Tests ────────────────────────────────────────────────
+    // ── failing_results ──────────────────────────────────────────────────────
 
     #[test]
     fn test_failing_results_filters_correctly() {
-        let env = Env::default();
-        let mut results = Vec::new(&env);
-
-        results.push_back(AuditResult {
-            package_name: String::from_slice(&env, "pkg1"),
-            passed: true,
-            issues: Vec::new(&env),
-        });
-
-        results.push_back(AuditResult {
-            package_name: String::from_slice(&env, "pkg2"),
-            passed: false,
-            issues: {
-                let mut v = Vec::new(&env);
-                v.push_back(String::from_slice(&env, "issue1"));
-                v
-            },
-        });
-
-        results.push_back(AuditResult {
-            package_name: String::from_slice(&env, "pkg3"),
-            passed: true,
-            issues: Vec::new(&env),
-        });
-
+        let packages = vec![
+            make_entry("svgo", "3.3.2", VALID_HASH, true),
+            make_entry("svgo", "3.3.3", VALID_HASH, true),
+        ];
+        let results = audit_all(&packages, &safe_versions());
         let failures = failing_results(&results);
         assert_eq!(failures.len(), 1);
-        assert_eq!(
-            failures.get(0).unwrap().package_name.to_xdr().to_string(),
-            "pkg2"
-        );
+        assert_eq!(failures[0].package_name, "svgo");
     }
 
     #[test]
     fn test_failing_results_empty_when_all_pass() {
-        let env = Env::default();
-        let mut results = Vec::new(&env);
-
-        results.push_back(AuditResult {
-            package_name: String::from_slice(&env, "pkg1"),
-            passed: true,
-            issues: Vec::new(&env),
-        });
-
-        let failures = failing_results(&results);
-        assert_eq!(failures.len(), 0);
+        let packages = vec![make_entry("svgo", "3.3.3", VALID_HASH, true)];
+        let results = audit_all(&packages, &safe_versions());
+        assert!(failing_results(&results).is_empty());
     }
 
-    // ── validate_lockfile_version Tests ──────────────────────────────────────
+    // ── validate_lockfile_version ────────────────────────────────────────────
 
     #[test]
-    fn test_validate_lockfile_version_2() {
+    fn test_lockfile_version_2_valid() {
         assert!(validate_lockfile_version(2));
     }
 
     #[test]
-    fn test_validate_lockfile_version_3() {
+    fn test_lockfile_version_3_valid() {
         assert!(validate_lockfile_version(3));
     }
 
     #[test]
-    fn test_validate_lockfile_version_1_rejected() {
+    fn test_lockfile_version_1_invalid() {
+        // npm <7 lockfiles lack integrity hashes — rejected
         assert!(!validate_lockfile_version(1));
     }
 
     #[test]
-    fn test_validate_lockfile_version_0_rejected() {
+    fn test_lockfile_version_0_invalid() {
         assert!(!validate_lockfile_version(0));
     }
 
     #[test]
-    fn test_validate_lockfile_version_4_rejected() {
+    fn test_lockfile_version_4_invalid() {
         assert!(!validate_lockfile_version(4));
     }
 
-    // ── has_failures Tests ───────────────────────────────────────────────────
+    // ── audit_all_bounded ────────────────────────────────────────────────────
 
     #[test]
-    fn test_has_failures_true() {
-        let env = Env::default();
-        let mut results = Vec::new(&env);
-
-        results.push_back(AuditResult {
-            package_name: String::from_slice(&env, "pkg1"),
-            passed: true,
-            issues: Vec::new(&env),
-        });
-
-        results.push_back(AuditResult {
-            package_name: String::from_slice(&env, "pkg2"),
-            passed: false,
-            issues: Vec::new(&env),
-        });
-
-        assert!(has_failures(&results));
+    fn test_bounded_within_limit_returns_ok() {
+        let packages = vec![make_entry("svgo", "3.3.3", VALID_HASH, true)];
+        assert!(audit_all_bounded(&packages, &safe_versions()).is_ok());
     }
 
     #[test]
-    fn test_has_failures_false() {
-        let env = Env::default();
-        let mut results = Vec::new(&env);
-
-        results.push_back(AuditResult {
-            package_name: String::from_slice(&env, "pkg1"),
-            passed: true,
-            issues: Vec::new(&env),
-        });
-
-        assert!(!has_failures(&results));
-    }
-
-    // ── count_failures Tests ─────────────────────────────────────────────────
-
-    #[test]
-    fn test_count_failures_multiple() {
-        let env = Env::default();
-        let mut results = Vec::new(&env);
-
-        results.push_back(AuditResult {
-            package_name: String::from_slice(&env, "pkg1"),
-            passed: false,
-            issues: Vec::new(&env),
-        });
-
-        results.push_back(AuditResult {
-            package_name: String::from_slice(&env, "pkg2"),
-            passed: true,
-            issues: Vec::new(&env),
-        });
-
-        results.push_back(AuditResult {
-            package_name: String::from_slice(&env, "pkg3"),
-            passed: false,
-            issues: Vec::new(&env),
-        });
-
-        assert_eq!(count_failures(&results), 2);
+    fn test_bounded_empty_input_returns_ok() {
+        assert!(audit_all_bounded(&[], &safe_versions()).is_ok());
     }
 
     #[test]
-    fn test_count_failures_zero() {
-        let env = Env::default();
-        let mut results = Vec::new(&env);
+    fn test_bounded_results_match_audit_all() {
+        let packages = vec![
+            make_entry("svgo", "3.3.2", VALID_HASH, true),
+            make_entry("svgo", "3.3.3", VALID_HASH, true),
+        ];
+        let bounded = audit_all_bounded(&packages, &safe_versions()).unwrap();
+        let unbounded = audit_all(&packages, &safe_versions());
+        assert_eq!(bounded, unbounded);
+    }
 
-        results.push_back(AuditResult {
-            package_name: String::from_slice(&env, "pkg1"),
-            passed: true,
-            issues: Vec::new(&env),
-        });
+    #[test]
+    fn test_bounded_exactly_at_limit_returns_ok() {
+        let packages: Vec<_> = (0..MAX_PACKAGES)
+            .map(|i| make_entry(&format!("pkg-{}", i), "1.0.0", VALID_HASH, false))
+            .collect();
+        assert!(audit_all_bounded(&packages, &safe_versions()).is_ok());
+    }
 
-        assert_eq!(count_failures(&results), 0);
+    #[test]
+    fn test_bounded_one_over_limit_returns_err() {
+        let packages: Vec<_> = (0..=MAX_PACKAGES)
+            .map(|i| make_entry(&format!("pkg-{}", i), "1.0.0", VALID_HASH, false))
+            .collect();
+        let err = audit_all_bounded(&packages, &safe_versions()).unwrap_err();
+        assert!(err.contains("MAX_PACKAGES"));
+        assert!(err.contains(&MAX_PACKAGES.to_string()));
+    }
+
+    #[test]
+    fn test_bounded_error_message_contains_actual_count() {
+        let count = MAX_PACKAGES + 10;
+        let packages: Vec<_> = (0..count)
+            .map(|i| make_entry(&format!("pkg-{}", i), "1.0.0", VALID_HASH, false))
+            .collect();
+        let err = audit_all_bounded(&packages, &safe_versions()).unwrap_err();
+        assert!(err.contains(&count.to_string()));
+    }
+
+    #[test]
+    fn test_max_packages_constant_is_positive() {
+        assert!(MAX_PACKAGES > 0);
     }
 }
