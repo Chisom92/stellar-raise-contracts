@@ -80,6 +80,19 @@ and to `validate_bonus_goal` for the bonus goal ordering constraint.
 Returns `Ok(())` when `bonus_goal` is `None` or strictly greater than `goal`.
 Returns `Err(ContractError::InvalidBonusGoal)` otherwise.
 
+### `log_initialize(env, creator, token, goal, deadline, min_contribution)`
+
+Emits a single bounded `("campaign", "initialized")` event with a fixed-size
+scalar payload. Only the five core scalar fields are included — optional strings
+such as `bonus_goal_description` are intentionally excluded to keep event size
+O(1) regardless of input length.
+
+**Gas efficiency**: a single event with a 5-field tuple costs a fixed amount of
+gas. Including unbounded strings would make event cost proportional to string
+length, creating a gas griefing vector.
+
+**Event data**: `(Address, Address, i128, u64, i128)` — `(creator, token, goal, deadline, min_contribution)`.
+
 ### `describe_init_error(code) → &'static str`
 
 Maps a `ContractError` repr value to a human-readable string.  Intended for
