@@ -11,10 +11,11 @@
 |---|---|---|
 | OS | Linux (x86-64) or macOS 12+ | WSL2 on Windows |
 | RAM | 4 GB | 8 GB recommended for `--release` builds |
-| Disk | 2 GB free | Rust toolchain + WASM target |
+| Disk | 2 GB free | Rust toolchain + WASM target + node_modules |
 | Rust | stable (≥ 1.74) | `rustup update stable` |
 | Stellar CLI | ≥ 20.0.0 | Renamed from `soroban` in v20 |
-| Node.js | ≥ 18 | For frontend and JS tests |
+| Node.js | ≥ 18 | Required for frontend UI and JS tests |
+| npm | ≥ 9 | Bundled with Node 18+ |
 
 ---
 
@@ -127,6 +128,110 @@ cargo test --workspace -- --test-threads=2
 
 ---
 
+## Edge Case 6 — Node.js Version Mismatch (Frontend UI)
+
+**Symptom**
+
+```
+SyntaxError: Unexpected token '?'
+# or npm WARN EBADENGINE Unsupported engine { required: { node: '>=18' } }
+```
+
+**Fix**
+
+```bash
+# Install nvm if not present
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+source ~/.bashrc
+
+nvm install 18
+nvm use 18
+node --version   # v18.x.x
+```
+
+**Verify**
+
+```bash
+cd frontend && npm install && npm test -- --run
+```
+
+---
+
+## Edge Case 7 — npm Peer Dependency Conflicts
+
+**Symptom**
+
+```
+npm ERR! ERESOLVE unable to resolve dependency tree
+```
+
+**Fix**
+
+```bash
+npm install --legacy-peer-deps
+```
+
+> Only use `--legacy-peer-deps` if you understand the dependency tree. Prefer
+> resolving the conflict explicitly in `package.json` for production builds.
+
+---
+
+## Edge Case 8 — Frontend Dev Server Port Conflict
+
+**Symptom**
+
+```
+Error: EADDRINUSE: address already in use :::3000
+```
+
+**Fix**
+
+```bash
+# Find and kill the process occupying port 3000
+lsof -ti:3000 | xargs kill -9
+npm run dev
+```
+
+Alternatively, configure a different port in `vite.config.ts` (or `next.config.js`):
+
+```ts
+// vite.config.ts
+export default { server: { port: 3001 } };
+```
+
+---
+
+## Edge Case 9 — CSS Variables Not Resolving in Frontend
+
+**Symptom**  
+Design tokens (`--color-docs-bg`, `--color-docs-accent`, etc.) render as empty
+strings or fall back to defaults unexpectedly.
+
+**Cause**  
+The `useDocsCssVariable` hook reads from `getComputedStyle` at runtime. If the
+stylesheet containing the variable declarations hasn't loaded yet (e.g., SSR or
+lazy CSS), the hook returns the fallback value.
+
+**Fix**
+
+1. Ensure the global CSS file that declares the variables is imported in your
+   app entry point (e.g., `_app.tsx` or `main.tsx`):
+
+   ```ts
+   import '../styles/globals.css';
+   ```
+
+2. Provide meaningful fallback values in every `useDocsCssVariable` call:
+
+   ```ts
+   const bg = useDocsCssVariable('--color-docs-bg', '#FAFAFA');
+   ```
+
+3. For SSR environments, guard the hook with a `typeof window !== 'undefined'`
+   check or use a `useEffect` to defer resolution to the client.
+
+---
+
 ## Automated Verification
 
 Run the environment check script before opening a PR or filing a bug report:
@@ -138,6 +243,7 @@ Run the environment check script before opening a PR or filing a bug report:
 The script checks:
 - `rustc`, `cargo`, `stellar` are on `$PATH`
 - `wasm32-unknown-unknown` target is installed
+- `node` and `npm` meet minimum version requirements
 - A dry-run build of the crowdfund contract succeeds
 
 Exit codes: `0` = all checks passed, `1` = one or more checks failed.
@@ -151,3 +257,8 @@ Exit codes: `0` = all checks passed, `1` = one or more checks failed.
   not a plain keypair (see `docs/admin_upgrade_mechanism.md`).
 - Rotate keys immediately if a secret is accidentally pushed to a public repo.
   Use `stellar keys remove <name>` and generate a new identity.
+- CSS variable values are validated against an allowlist by `CssVariableValidator`
+  to prevent CSS injection (see `docs/css_variables_usage.md`).
+- Never embed secret keys, XDR payloads, or account mnemonics in frontend error
+  messages — the `FrontendGlobalErrorBoundary` strips stack traces in production,
+  but the message string itself is still surfaced to users.
