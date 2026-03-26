@@ -21,6 +21,7 @@ pub mod proptest_generator_boundary;
 pub mod refund_single_token;
 pub mod soroban_sdk_minor;
 pub mod stellar_token_minter;
+pub mod stream_processing_optimization;
 pub mod withdraw_event_emission;
 
 // ── Imports from modules ──────────────────────────────────────────────────────
@@ -28,6 +29,10 @@ pub mod withdraw_event_emission;
 use crowdfund_initialize_function::{execute_initialize, InitParams};
 use refund_single_token::{
     execute_refund_single, refund_single_transfer, validate_refund_preconditions,
+};
+use stream_processing_optimization::{
+    bonus_goal_progress_bps as compute_bonus_goal_progress_bps, build_campaign_stats,
+    load_address_stream_state, next_unmet_milestone, persist_address_stream_if_missing,
 };
 use withdraw_event_emission::{emit_fee_transferred, emit_withdrawn, mint_nfts_in_batch};
 
@@ -71,6 +76,9 @@ mod stellar_token_minter_test_original;
 #[cfg(test)]
 #[path = "stellar_token_minter.test.rs"]
 mod stellar_token_minter_test_comprehensive;
+#[cfg(test)]
+#[path = "stream_processing_optimization.test.rs"]
+mod stream_processing_optimization_test;
 
 // --- Constants ---
 const CONTRACT_VERSION: u32 = 3;
@@ -339,14 +347,12 @@ impl CrowdfundContract {
             return Err(ContractError::CampaignEnded);
         }
 
-        let mut contributors: Vec<Address> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Contributors)
-            .unwrap_or_else(|| Vec::new(&env));
-        let is_new_contributor = !contributors.contains(&contributor);
+        let mut contributor_stream =
+            load_address_stream_state(&env, &DataKey::Contributors, &contributor);
+        let is_new_contributor = !contributor_stream.contains_target;
         if is_new_contributor {
-            if let Err(err) = contract_state_size::validate_contributor_capacity(contributors.len())
+            if let Err(err) =
+                contract_state_size::validate_contributor_capacity(contributor_stream.entries.len())
             {
                 panic!("state size limit exceeded");
             }
@@ -406,22 +412,15 @@ impl CrowdfundContract {
             }
         }
 
-        let mut contributors: Vec<Address> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Contributors)
-            .unwrap_or_else(|| Vec::new(&env));
-
-        if !contributors.contains(&contributor) {
+        if is_new_contributor {
             // Enforce contributor list size limit before appending.
             contract_state_size::check_contributor_limit(&env).expect("contributor limit exceeded");
-            contributors.push_back(contributor.clone());
-            env.storage()
-                .persistent()
-                .set(&DataKey::Contributors, &contributors);
-            env.storage()
-                .persistent()
-                .extend_ttl(&DataKey::Contributors, 100, 100);
+            persist_address_stream_if_missing(
+                &env,
+                &DataKey::Contributors,
+                &mut contributor_stream,
+                &contributor,
+            );
         }
 
         // Emit PledgeReceived event — includes total_raised for real-time progress bars.
@@ -468,14 +467,12 @@ impl CrowdfundContract {
             return Err(ContractError::CampaignEnded);
         }
 
-        let mut pledgers: Vec<Address> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Pledgers)
-            .unwrap_or_else(|| Vec::new(&env));
-        let is_new_pledger = !pledgers.contains(&pledger);
+        let mut pledger_stream = load_address_stream_state(&env, &DataKey::Pledgers, &pledger);
+        let is_new_pledger = !pledger_stream.contains_target;
         if is_new_pledger {
-            if let Err(err) = contract_state_size::validate_pledger_capacity(pledgers.len()) {
+            if let Err(err) =
+                contract_state_size::validate_pledger_capacity(pledger_stream.entries.len())
+            {
                 panic!("state size limit exceeded");
             }
         }
@@ -499,21 +496,15 @@ impl CrowdfundContract {
             .set(&DataKey::TotalPledged, &(total_pledged + amount));
 
         // Track pledger address if new.
-        let mut pledgers: Vec<Address> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Pledgers)
-            .unwrap_or_else(|| Vec::new(&env));
-        if !pledgers.contains(&pledger) {
+        if is_new_pledger {
             // Enforce pledger list size limit before appending.
             contract_state_size::check_pledger_limit(&env).expect("pledger limit exceeded");
-            pledgers.push_back(pledger.clone());
-            env.storage()
-                .persistent()
-                .set(&DataKey::Pledgers, &pledgers);
-            env.storage()
-                .persistent()
-                .extend_ttl(&DataKey::Pledgers, 100, 100);
+            persist_address_stream_if_missing(
+                &env,
+                &DataKey::Pledgers,
+                &mut pledger_stream,
+                &pledger,
+            );
         }
 
         // Emit pledge event
@@ -990,13 +981,7 @@ impl CrowdfundContract {
             .get(&DataKey::StretchGoals)
             .unwrap_or_else(|| Vec::new(&env));
 
-        for milestone in stretch_goals.iter() {
-            if total_raised < milestone {
-                return milestone;
-            }
-        }
-
-        0
+        next_unmet_milestone(total_raised, &stretch_goals)
     }
     /// Returns the total amount of tokens raised so far.
     pub fn total_raised(env: Env) -> i128 {
@@ -1044,20 +1029,10 @@ impl CrowdfundContract {
             .get(&DataKey::TotalRaised)
             .unwrap_or(0);
 
-        if let Some(bg) = env.storage().instance().get::<_, i128>(&DataKey::BonusGoal) {
-            if bg > 0 {
-                let raw = (total_raised * 10_000) / bg;
-                if raw > 10_000 {
-                    10_000
-                } else {
-                    raw as u32
-                }
-            } else {
-                0
-            }
-        } else {
-            0
-        }
+        compute_bonus_goal_progress_bps(
+            total_raised,
+            env.storage().instance().get::<_, i128>(&DataKey::BonusGoal),
+        )
     }
 
     /// Returns the campaign deadline.
@@ -1102,44 +1077,7 @@ impl CrowdfundContract {
             .get(&DataKey::Contributors)
             .unwrap_or_else(|| Vec::new(&env));
 
-        let progress_bps = if goal > 0 {
-            let raw = (total_raised * 10_000) / goal;
-            if raw > 10_000 {
-                10_000
-            } else {
-                raw as u32
-            }
-        } else {
-            0
-        };
-
-        let contributor_count = contributors.len();
-        let (average_contribution, largest_contribution) = if contributor_count == 0 {
-            (0, 0)
-        } else {
-            let average = total_raised / contributor_count as i128;
-            let mut largest = 0i128;
-            for contributor in contributors.iter() {
-                let amount: i128 = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::Contribution(contributor))
-                    .unwrap_or(0);
-                if amount > largest {
-                    largest = amount;
-                }
-            }
-            (average, largest)
-        };
-
-        CampaignStats {
-            total_raised,
-            goal,
-            progress_bps,
-            contributor_count,
-            average_contribution,
-            largest_contribution,
-        }
+        build_campaign_stats(&env, total_raised, goal, &contributors)
     }
 
     /// Returns the campaign title.
